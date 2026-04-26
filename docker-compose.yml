@@ -2,7 +2,7 @@ services:
   # ── Backend ──────────────────────────────────────────────────────────
   api:
     build:
-      context: ./construction-back-end
+      context: ./folio-back-end
       dockerfile: Dockerfile
     ports:
       - "5000:5000"
@@ -17,10 +17,17 @@ services:
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASS=${SMTP_PASS:-}
       - FLASK_DEBUG=${FLASK_DEBUG:-false}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+      - S3_BUCKET=${S3_BUCKET:-construction-attachments}
+      - S3_REGION=${S3_REGION:-us-east-1}
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
@@ -31,7 +38,7 @@ services:
 
   worker:
     build:
-      context: ./construction-back-end
+      context: ./folio-back-end
       dockerfile: Dockerfile
     command: python -m infrastructure.queue.rq_worker
     environment:
@@ -77,10 +84,27 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    environment:
+      - MINIO_ROOT_USER=${S3_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── Frontend ─────────────────────────────────────────────────────────
   frontend:
     build:
-      context: ./construction-front-end
+      context: ./folio-front-end
       dockerfile: Dockerfile
       args:
         # Baked at build time — used by browser (client-side) requests
@@ -104,3 +128,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  minio_data:
