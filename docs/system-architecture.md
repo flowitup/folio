@@ -44,6 +44,40 @@ UI: per-status grouped toasts ("Added to 3 · Skipped 1 already-member · 1 not 
 - **Rate limits** — 5/h per user + 10/h per IP on bulk-add; 30/min per user on user-search.
 - **Pydantic guards** — `project_ids: Field(min_length=1, max_length=50)` rejects abuse before reaching the use-case.
 
+### Notes + In-App Notifications
+
+Per-project shared notes with date-anchored in-app reminders. Lazy notification computation — no background worker, no notifications table, no scheduled jobs.
+
+```
+┌─ Browser ────────────────────────────────────────────────────────┐
+│  Bell icon (Topbar) ──poll @60s──→ GET /api/v1/notifications     │
+│         ▲                              │                         │
+│         │ items[]                      │                         │
+│         │                              ▼                         │
+│  Notes agenda /projects/:id/notes      Lazy SQL:                 │
+│   • inline edit rows                   notes JOIN memberships    │
+│   • optimistic save                    WHERE fire_at <= NOW()    │
+│   • undo-toast delete                  AND NOT EXISTS dismissed  │
+└──────────────────────────────────────────────────────────────────┘
+
+fire_at = (due_date AT 09:00 UTC) - lead_time_minutes
+                       └─ fixed anchor; no per-user TZ for v1
+
+Dismissals:
+   notes_dismissed(user_id, note_id, dismissed_at) — composite PK
+   ON DELETE CASCADE: project deleted → notes deleted → dismissals deleted
+```
+
+**Tables**
+- `notes` — id, project_id (cascade), created_by (restrict), title, description, due_date, lead_time_minutes ∈ {0,60,1440}, status ∈ {open,done}, timestamps. Indexes: project_id; due_date; (project_id, status, due_date).
+- `notes_dismissed` — user_id (cascade), note_id (cascade), dismissed_at. Composite PK; user_id index.
+
+**Endpoints** — see `docs/checklist/feature-checklist.md`.
+
+**Critical invariant** — when a note's `due_date` or `lead_time_minutes` is updated, all existing dismissals for that note are deleted in the same transaction. This re-fires the reminder for all project members under the new schedule.
+
+**Polling** — bell-icon polls every 60s ±10s (jitter). Pauses when `document.hidden`. `Cache-Control: no-cache, must-revalidate` on the polling endpoint.
+
 ## Invitation Lifecycle (invite-only signup)
 
 ```

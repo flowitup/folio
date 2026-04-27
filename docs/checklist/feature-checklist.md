@@ -55,6 +55,17 @@
 - [x] POST `/api/v1/admin/users/:id/memberships` - Bulk-add existing user to projects (`*:*` only; 5/h/user, 10/h/IP)
 - [x] GET `/api/v1/admin/users?search=q&limit=20` - Search users by email or name (`*:*` only; 30/min)
 
+## Notes (per-project)
+
+| Endpoint | Method | Auth | Purpose |
+|---|---|---|---|
+| `/api/v1/projects/:id/notes` | POST | JWT + member | Create note |
+| `/api/v1/projects/:id/notes` | GET | JWT + member | List project notes |
+| `/api/v1/projects/:id/notes/:note_id` | PATCH | JWT + member | Update note (cascades dismissals on schedule change) |
+| `/api/v1/projects/:id/notes/:note_id` | DELETE | JWT + member | Delete note |
+| `/api/v1/notifications` | GET | JWT | List due reminders for current user across all projects |
+| `/api/v1/notifications/:note_id/dismiss` | POST | JWT + member | Dismiss a reminder for current user |
+
 ---
 
 ### Domain Entities

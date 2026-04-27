@@ -88,7 +88,27 @@ URL: `/{locale}/admin/users`
 
 Superadmin-only page (visible to users with global `admin` role / `*:*` permission). Three-step form: debounced user search (≥3 chars, picks an existing user by email or display name), multi-select projects (with client-side filter, capped at 50 per request), single role applied across all selected projects. On submit the system attempts to add the user to each selected project; results come back as a per-project status array (`added` / `already_member_same_role` / `already_member_different_role` / `project_not_found`) and the UI surfaces them as grouped toasts. If any project was newly added, the target user receives one consolidated email listing all newly-added projects + the role. Refuses silent role overrides — admins must use a future role-change endpoint for that. Rate-limited to 5 bulk ops/hour per superadmin + 10/hour per IP.
 
-## 8. Settings
+## 8. Notes (per-project shared, with in-app reminders)
+
+Members of a project can capture notes with a due date and a lead time. When the lead time expires before the due date, the note appears as a reminder in the topbar bell-icon dropdown for **all** members of the project. Each member can dismiss reminders independently.
+
+**Capabilities**
+- Create / edit / delete notes (any project member)
+- Mark notes done / open
+- Inline-edit rows on the agenda page (`/projects/:id/notes`)
+- Agenda groups: Today / Tomorrow / This week / Later / Done
+- 3 lead-time presets: at due time / 1 hour before / 1 day before
+- Bell-icon dropdown polls every 60s; per-row dismiss
+- Reminders fire at **09:00 UTC** of the due date (per-user timezone deferred to v2)
+
+**Out of scope (v1)**
+- Email reminders (deferred — pipeline ready for v2)
+- Recurrence
+- Browser push notifications
+- Per-note assignees
+- Per-user timezone column
+
+## 9. Settings
 
 URL: `/{locale}/settings`
 
@@ -96,7 +116,7 @@ Application settings page split into three sections — Profile Settings, Notifi
 
 Screenshot: `screenshots/settings.jpg`
 
-## 9. Unauthorized (403)
+## 10. Unauthorized (403)
 
 URL: `/{locale}/unauthorized`
 
