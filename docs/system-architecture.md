@@ -8,6 +8,49 @@
 **Primary:** Hexagonal Architecture (Ports & Adapters)
 **Supporting:** Domain-Driven Design (DDD), CQRS principles
 
+## Invitation Lifecycle (invite-only signup)
+
+```
+admin clicks "Invite member"
+  └─> POST /api/v1/invitations  (auth + project:invite perm OR project.owner_id)
+       └─> CreateInvitationUseCase
+             ├─ if email belongs to existing user:
+             │    └─ ProjectMembership.create() → repo.add()
+             │       └─ enqueue tasks.send_email(added_to_project tmpl)
+             │           └─ RQ worker → EmailPort.send() → Resend HTTP API
+             │           returns {kind: 'direct_added'}
+             └─ else (new email):
+                  ├─ Invitation.create() → (entity, raw_token) [token hashed in DB]
+                  ├─ repo.save(invitation)
+                  ├─ build accept_url = APP_BASE_URL/{locale}/accept-invite/{raw_token}
+                  └─ enqueue tasks.send_email(invite tmpl in admin's locale)
+                      returns {kind: 'invitation_sent', invitation_id, expires_at}
+
+invitee receives email, clicks link → /[locale]/accept-invite/{token}
+  ├─> server-component calls GET /api/v1/invitations/verify/{token}
+  │     └─ VerifyInvitationUseCase
+  │         ├─ unknown → 404
+  │         ├─ expired/revoked/accepted → 410 with reason
+  │         └─ valid → returns safe metadata (no invitation_id)
+  └─> renders form (or error / logged-in-other state)
+       └─> on submit: POST /api/v1/invitations/accept {token, name, password}
+             └─ AcceptInvitationUseCase (single DB transaction)
+                 ├─ create User (display_name=name, Argon2 password hash)
+                 ├─ create ProjectMembership (user_id, project_id, role_id, invited_by)
+                 ├─ invitation.accept() → save
+                 └─ TokenIssuer.issue_pair(user) → set httpOnly+CSRF cookies
+                 redirects → /[locale]/dashboard (authenticated)
+```
+
+**Key properties:**
+- **Token**: opaque `secrets.token_urlsafe(32)`, SHA-256 hashed in DB, single-use, 7-day expiry. Lookup in constant time via `hmac.compare_digest`.
+- **No public signup**: there is NO `POST /auth/register`, NO `POST /signup`, NO `POST /users`. Invitation acceptance is the only account-creation path. A negative test guards this.
+- **Permission**: new `project:invite` permission, granted to global `admin` role. `project.owner_id == inviter_id` is also accepted (no permission required for owners).
+- **Per-project roles**: the `user_projects` membership table now carries `role_id` (NOT NULL) and `invited_by_user_id` (nullable). Existing rows backfilled to `member`.
+- **Email dispatch**: `ResendEmailAdapter` implements an EmailPort contract; `wiring.py` switches between `resend | smtp | inmemory` based on `EMAIL_PROVIDER` env. Templates live at `app/infrastructure/email/templates/{invite,added_to_project}.{en,fr,vi}.{html,txt}`. RQ worker dispatches asynchronously so request handlers don't block on the Resend API.
+- **Rate limits**: 10 invites/h per inviter (Flask-Limiter), 50/day per project (use-case level). Public `verify` 60/min/IP, `accept` 5/min/IP.
+- **Edge cases**: revoke pending; resend = revoke + new token; pending duplicate enforced by partial unique index `(email, project_id) WHERE status='pending'`; logged-in-as-other shows sign-out gate; verify endpoint returns same 404 for nonexistent and 410 with reason for expired/revoked/accepted (no info-leak about whether token ever existed for nonexistent case).
+
 ## High-Level Architecture
 
 ```

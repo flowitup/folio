@@ -42,6 +42,15 @@
 - [ ] PUT `/api/v1/users/:id` - Update user
 - [ ] DELETE `/api/v1/users/:id` - Delete user
 
+#### Invitations (invite-only signup)
+- [x] POST `/api/v1/invitations` - Create invitation (auth + `project:invite` perm OR project owner; 10/h)
+- [x] GET `/api/v1/projects/:id/invitations?status=pending` - List pending (auth + member; 60/min)
+- [x] POST `/api/v1/invitations/:id/revoke` - Revoke pending (auth + perm/owner; 30/min)
+- [x] GET `/api/v1/invitations/verify/:token` - Public verify (60/min/IP)
+- [x] POST `/api/v1/invitations/accept` - Public accept; sets auth cookies (5/min/IP)
+- [x] GET `/api/v1/roles` - List roles (excludes superadmin)
+- [x] GET `/api/v1/projects/:id/members` - List project members
+
 ---
 
 ### Domain Entities

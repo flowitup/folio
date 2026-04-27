@@ -20,6 +20,26 @@ Frontend: http://localhost:3000
 Backend: http://localhost:5000/api/v1
 ```
 
+### Resend setup (transactional email)
+
+The invite-only signup feature dispatches invitation emails through Resend. To set up:
+
+1. Create a Resend account at https://resend.com (free tier: ~100 emails/day, 1 verified domain).
+2. Verify your sending domain in the Resend dashboard.
+3. Generate an API key (`Settings → API Keys → Create API Key`, scope: send emails).
+4. Set the following env vars in your `.env` (server) and pass them through Docker:
+
+```env
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=re_xxxxxxxxxxxx
+FROM_EMAIL=invites@yourdomain.com
+APP_BASE_URL=https://yourdomain.com         # http://localhost:3000 for dev
+```
+
+**Free-tier limits:** 100 emails/day, 1 verified sender domain. The backend enforces app-level rate limits (10 invites/hour per inviter, 50/day per project) to protect this quota. For higher throughput, upgrade Resend or run a self-hosted SMTP gateway (set `EMAIL_PROVIDER=smtp` and configure the SMTP_* vars instead).
+
+**Test mode:** in CI / local tests, set `EMAIL_PROVIDER=inmemory`; the backend swaps to an in-memory adapter that records `EmailPayload` instances without making HTTP calls. The Playwright e2e suite reads them via the test-only endpoint `GET /api/v1/__test__/last-email` (registered ONLY when `TESTING=True`).
+
 **Local Development without Docker:**
 ```bash
 # Backend

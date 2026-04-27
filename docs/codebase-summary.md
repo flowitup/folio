@@ -64,6 +64,7 @@ construction-back-end/
 - ✅ Rate limiting & token blacklist
 - ✅ Labor charge calculator module (CRUD + RBAC)
 - ✅ Invoices (Factures) module — per-project client/labor/supplier invoices with browser print-to-PDF
+- ✅ Invitation module — invite-only account creation: admins invite users to projects with per-project roles via tokenized email links (Resend, 7-day expiry, single-use); `app/application/invitations/`, `app/infrastructure/email/`, `app/api/v1/invitations/`; frontend `accept-invite/[token]` (public) + `(app)/projects/[id]/members` (admin)
 
 ### In Progress (Phase 09)
 - 🔄 Frontend login UI & form components

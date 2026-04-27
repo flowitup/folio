@@ -37,6 +37,7 @@ domain/
 - Framework-agnostic
 - Rich domain models
 - Encapsulated business logic
+- Tokens (invite, password reset, email verify, etc.): generate via `secrets.token_urlsafe(32)`, store SHA-256 hash in DB (`hashlib.sha256(raw).hexdigest()`), compare via `hmac.compare_digest`. Raw token is returned by the factory ONCE for the caller to email; never persisted.
 
 ### Application Layer
 
