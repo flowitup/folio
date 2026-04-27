@@ -65,6 +65,7 @@ construction-back-end/
 - ✅ Labor charge calculator module (CRUD + RBAC)
 - ✅ Invoices (Factures) module — per-project client/labor/supplier invoices with browser print-to-PDF
 - ✅ Invitation module — invite-only account creation: admins invite users to projects with per-project roles via tokenized email links (Resend, 7-day expiry, single-use); `app/application/invitations/`, `app/infrastructure/email/`, `app/api/v1/invitations/`; frontend `accept-invite/[token]` (public) + `(app)/projects/[id]/members` (admin)
+- ✅ Superadmin bulk-add — `*:*` admins add an existing user to multiple projects with one role applied across all; partial-success per-project results + consolidated email; `app/application/admin/`, `app/api/v1/admin/`; frontend `(app)/admin/users` page (superadmin-only) with debounced user search
 
 ### In Progress (Phase 09)
 - 🔄 Frontend login UI & form components

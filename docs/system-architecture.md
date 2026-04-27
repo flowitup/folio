@@ -8,6 +8,42 @@
 **Primary:** Hexagonal Architecture (Ports & Adapters)
 **Supporting:** Domain-Driven Design (DDD), CQRS principles
 
+## Superadmin Bulk Add (admin tool — direct membership)
+
+A `*:*`-bearing admin (the existing `admin` role from `scripts/seed_auth.py`) can add an existing user to multiple projects in one operation. NO new role, no migration — this reuses the invitation-feature's `user_projects` table (incl. `role_id` + `invited_by_user_id`).
+
+```
+superadmin opens /[locale]/(app)/admin/users (server-side *:* gate)
+  ├─ debounced user search → GET /api/v1/admin/users?search=q&limit=20
+  ├─ select target user
+  ├─ multi-select projects (cap 50) → uses existing /api/v1/projects
+  ├─ pick role → existing /api/v1/roles (excludes superadmin)
+  └─ Submit → POST /api/v1/admin/users/<user_id>/memberships
+       └─ BulkAddExistingUserUseCase (~80 LoC)
+            ├─ authz: requester *:*  (defense-in-depth at use-case + route)
+            ├─ load target user (404 if missing)
+            ├─ load role (404 if missing or name=='superadmin' → 403)
+            ├─ dedup project_ids; reject empty (400) or > 50 (400)
+            ├─ per project_id loop:
+            │    ├─ load project; missing → status='project_not_found'
+            │    ├─ existing_role = membership_repo.find_role_id(user_id, project_id)
+            │    ├─ if None → add membership (invited_by=requester), status='added'
+            │    ├─ elif existing_role == role_id → status='already_member_same_role'
+            │    └─ else → status='already_member_different_role'
+            ├─ if any 'added': enqueue ONE consolidated email (template added_to_projects.{en,fr,vi}.{html,txt})
+            └─ return ResultsDto(results=[{project_id, project_name, status}])
+
+UI: per-status grouped toasts ("Added to 3 · Skipped 1 already-member · 1 not found").
+```
+
+**Key properties:**
+- **Partial success** — no all-or-nothing transaction. Each project is independent; failures don't roll back the rest.
+- **Authz** — `*:*` permission required at BOTH route layer (JWT claims check) and use-case layer (defense-in-depth). The existing `admin` role is the de-facto superadmin tier — no new role added.
+- **Consolidated email** — one email per bulk operation regardless of N projects. Always sent in `'en'` for v1 (Folio doesn't store user preferred locale yet). Lists only successfully-added projects.
+- **Audit** — every new `user_projects` row stamps `invited_by_user_id` = the superadmin's UUID. Field name is slightly inaccurate for non-invitation paths; future migration could rename to `added_by_user_id`.
+- **Rate limits** — 5/h per user + 10/h per IP on bulk-add; 30/min per user on user-search.
+- **Pydantic guards** — `project_ids: Field(min_length=1, max_length=50)` rejects abuse before reaching the use-case.
+
 ## Invitation Lifecycle (invite-only signup)
 
 ```

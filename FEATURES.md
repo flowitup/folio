@@ -82,6 +82,12 @@ URL: `/{locale}/accept-invite/{token}`
 
 Public landing page for invitees clicking the email link. Server-side verifies the token and renders one of four states: (a) **valid** → "You're invited to join {Project} as {Role}" banner over a name + password + confirm form; on submit the account is created, JWT cookies set, and the user lands on the dashboard authenticated. (b) **expired / revoked / accepted** → clear error message with a "Go to login" CTA. (c) **invalid token** → generic "this invitation link is invalid". (d) **logged in as someone else** → sign-out gate (no info leak about the invite target). Self-serve signup remains disabled — invitations are the only path to an account.
 
+## 7d. Superadmin · Bulk add user to multiple projects
+
+URL: `/{locale}/admin/users`
+
+Superadmin-only page (visible to users with global `admin` role / `*:*` permission). Three-step form: debounced user search (≥3 chars, picks an existing user by email or display name), multi-select projects (with client-side filter, capped at 50 per request), single role applied across all selected projects. On submit the system attempts to add the user to each selected project; results come back as a per-project status array (`added` / `already_member_same_role` / `already_member_different_role` / `project_not_found`) and the UI surfaces them as grouped toasts. If any project was newly added, the target user receives one consolidated email listing all newly-added projects + the role. Refuses silent role overrides — admins must use a future role-change endpoint for that. Rate-limited to 5 bulk ops/hour per superadmin + 10/hour per IP.
+
 ## 8. Settings
 
 URL: `/{locale}/settings`

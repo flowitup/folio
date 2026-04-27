@@ -51,6 +51,10 @@
 - [x] GET `/api/v1/roles` - List roles (excludes superadmin)
 - [x] GET `/api/v1/projects/:id/members` - List project members
 
+#### Admin (superadmin · bulk membership)
+- [x] POST `/api/v1/admin/users/:id/memberships` - Bulk-add existing user to projects (`*:*` only; 5/h/user, 10/h/IP)
+- [x] GET `/api/v1/admin/users?search=q&limit=20` - Search users by email or name (`*:*` only; 30/min)
+
 ---
 
 ### Domain Entities
