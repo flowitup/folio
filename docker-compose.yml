@@ -41,6 +41,11 @@ services:
       context: ./folio-back-end
       dockerfile: Dockerfile
     command: python -m stack.queue.rq_worker
+    # Worker has no HTTP port — disable the inherited Dockerfile HEALTHCHECK
+    # (which curls localhost:5000/health and gets connection refused on the worker).
+    # RQ has no built-in healthcheck endpoint; container "running" is sufficient.
+    healthcheck:
+      disable: true
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-construction}:${POSTGRES_PASSWORD:-construction}@db:5432/${POSTGRES_DB:-construction}
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
