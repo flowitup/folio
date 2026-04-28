@@ -8,6 +8,25 @@
 **Primary:** Hexagonal Architecture (Ports & Adapters)
 **Supporting:** Domain-Driven Design (DDD), CQRS principles
 
+## Settings Page · Users & Roles Tab (FE relocation — no new BE endpoints)
+
+The Settings page (`/[locale]/settings`) uses a 7-section anchor-navigation layout rendered by a server component (`settings/page.tsx`) that fetches `roles` and `projects` server-side and passes them into `<SettingsClient>` (extracted client component).
+
+**Users section (7th tab) — permission gate:**
+- `useAuth().user.permissions.includes("*:*")` evaluated client-side inside `<UsersSection>`
+- Superadmin (`*:*`): renders the existing `BulkAddForm` (user search + project multi-select + role picker)
+- Non-superadmin: renders an inline "you don't have authorization" panel **inside the section content area** — no redirect to `/unauthorized`
+
+**Route changes:**
+- `/(app)/admin/users` route deleted entirely; existing bookmarks → 404 after merge
+- Sidebar ADMIN section removed (Users was the only item in that group)
+
+**Reused BE endpoints (unchanged):**
+- `GET /api/v1/admin/users?search=q&limit=20` — debounced user search
+- `POST /api/v1/admin/users/<user_id>/memberships` — bulk-add memberships
+
+---
+
 ## Superadmin Bulk Add (admin tool — direct membership)
 
 A `*:*`-bearing admin (the existing `admin` role from `scripts/seed_auth.py`) can add an existing user to multiple projects in one operation. NO new role, no migration — this reuses the invitation-feature's `user_projects` table (incl. `role_id` + `invited_by_user_id`).

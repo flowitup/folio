@@ -66,6 +66,15 @@
 | `/api/v1/notifications` | GET | JWT | List due reminders for current user across all projects |
 | `/api/v1/notifications/:note_id/dismiss` | POST | JWT + member | Dismiss a reminder for current user |
 
+### Settings: Users & Roles tab
+
+- FE relocation only — no new BE endpoints
+- Existing endpoints reused: `GET /api/v1/admin/users?search=q&limit=20`, `POST /api/v1/admin/users/<id>/memberships`
+- Permission gate: client-side `*:*` check; BE remains authoritative
+- Old `/{locale}/admin/users` route → 404 after merge
+
+---
+
 ## Labor · Export (Excel / PDF)
 
 | Method | Path | Auth | Notes |

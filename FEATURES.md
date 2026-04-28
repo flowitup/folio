@@ -111,6 +111,12 @@ URL: `/{locale}/admin/users`
 
 Superadmin-only page (visible to users with global `admin` role / `*:*` permission). Three-step form: debounced user search (≥3 chars, picks an existing user by email or display name), multi-select projects (with client-side filter, capped at 50 per request), single role applied across all selected projects. On submit the system attempts to add the user to each selected project; results come back as a per-project status array (`added` / `already_member_same_role` / `already_member_different_role` / `project_not_found`) and the UI surfaces them as grouped toasts. If any project was newly added, the target user receives one consolidated email listing all newly-added projects + the role. Refuses silent role overrides — admins must use a future role-change endpoint for that. Rate-limited to 5 bulk ops/hour per superadmin + 10/hour per IP.
 
+## 7e. Settings → Users & Roles tab
+
+URL: `/{locale}/settings` (Users section, 7th tab)
+
+Bulk-assign roles to existing users across one or more projects. Permission-gated: superadmin (`*:*`) sees the three-step bulk-add form (user search, project multi-select, role picker); non-superadmin sees an inline "you don't have authorization" panel rendered in the section content area — no redirect to `/unauthorized`. Replaces the old `/{locale}/admin/users` standalone route, which is deleted. Sidebar ADMIN nav section removed.
+
 ## 8. Notes (per-project shared, with in-app reminders)
 
 Members of a project can capture notes with a due date and a lead time. When the lead time expires before the due date, the note appears as a reminder in the topbar bell-icon dropdown for **all** members of the project. Each member can dismiss reminders independently.
