@@ -66,6 +66,19 @@
 | `/api/v1/notifications` | GET | JWT | List due reminders for current user across all projects |
 | `/api/v1/notifications/:note_id/dismiss` | POST | JWT + member | Dismiss a reminder for current user |
 
+## Labor · Export (Excel / PDF)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/projects/<id>/labor-export?from=YYYY-MM&to=YYYY-MM&format=xlsx\|pdf` | jwt + project:read | sync streaming, 24-month cap, 422/403/404 paths |
+
+**New BE dependencies (prod):** `openpyxl`, `reportlab`, `python-slugify`
+**New BE dependencies (dev/test):** `pypdf`
+**New FE dependencies:** none (uses existing shadcn primitives)
+**Bundled assets:** DejaVu Sans + Bold TTF (~1.4 MB) at `app/domain/labor/export/fonts/` — Bitstream Vera + DejaVu open-font license
+
+---
+
 ## Labor · Supplement Hours
 
 | Endpoint | Method | Change | Notes |

@@ -68,6 +68,7 @@ construction-back-end/
 - ✅ Superadmin bulk-add — `*:*` admins add an existing user to multiple projects with one role applied across all; partial-success per-project results + consolidated email; `app/application/admin/`, `app/api/v1/admin/`; frontend `(app)/admin/users` page (superadmin-only) with debounced user search
 - ✅ Notes + in-app notifications — per-project shared notes with due-date reminders; lazy SQL computation (no worker/no notifications table); BE: `app/application/notes/` (8 use-cases) + `app/api/v1/notes/` + `app/api/v1/notifications/`; FE: `src/app/[locale]/(app)/projects/[id]/notes/` (agenda + inline-editable rows) + `src/components/notifications/` (bell + 60s polling)
 - ✅ Labor supplement hours — per-day banked hours (0–12) accumulate across the month; every 8h auto-converts to 1 bonus full-day, 4h remainder to 1 bonus half-day. Standalone supplement-only entries supported (no shift required). Migration `20a22df3582d`; `app/application/labor/`; conversion is pure-derived (no persisted phantom rows).
+- ✅ Labor export — per-project Excel/PDF export over a 1..24-month range; includes daily detail (xlsx) + per-worker monthly summary with priced/bonus split (no aggregated total); real Vietnamese/French i18n; `app/domain/labor/export/`; bundled DejaVu fonts for Vietnamese diacritics.
 
 ### In Progress (Phase 09)
 - 🔄 Frontend login UI & form components

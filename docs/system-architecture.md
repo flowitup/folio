@@ -78,6 +78,40 @@ Dismissals:
 
 **Polling** — bell-icon polls every 60s ±10s (jitter). Pauses when `document.hidden`. `Cache-Control: no-cache, must-revalidate` on the polling endpoint.
 
+### Labor · Export (Excel / PDF)
+
+**Endpoint:** `GET /api/v1/projects/<id>/labor-export?from=YYYY-MM&to=YYYY-MM&format=xlsx|pdf`
+**Auth:** `@jwt_required + @require_permission("project:read")`
+
+**Pipeline:**
+```
+HTTP GET → Pydantic LaborExportRequest (regex + range validator: 1..24 months)
+       → ExportLaborUseCase.execute(project_id, range, format, requester)
+           ├─ for each month in range:
+           │    GetLaborSummaryUseCase + entry_repo.list_by_project_in_range → MonthBucket
+           ├─ build_xlsx(context, buckets) | build_pdf(context, buckets)
+           └─ slugify_project_name → filename
+       → Flask send_file(BytesIO(bytes), Content-Disposition: attachment, Cache-Control: no-store)
+```
+
+**Builders** (`app/domain/labor/export/`):
+- `xlsx_builder.py` — per-month sheets + Summary sheet; daily detail + per-worker monthly summary
+- `pdf_builder.py` — A4 portrait; KPI mini-table + per-worker monthly breakdown
+- `format.py` — shared formatting helpers (`format_eur_fr()`)
+- `models.py` — `MonthBucket`, `ExportContext` value objects
+
+**Currency rule:**
+- xlsx: cell `number_format = '[$€-fr-FR]'` (raw float values)
+- pdf: `format_eur_fr()` helper — both match FE `Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' })`
+
+**Font assets:** `app/domain/labor/export/fonts/` — DejaVu Sans + DejaVu Sans Bold TTF (~1.4 MB total); required for Vietnamese diacritics in PDF output. License: Bitstream Vera + DejaVu open-font.
+
+**"No aggregated Total" rule:** every cost breakdown uses explicit "Priced cost" + "Bonus cost" labels; any combined figure is labeled "Total (priced + bonus)" — no bare "Total" that could mislead readers.
+
+**Error paths:** 422 (invalid params / range > 24 months), 403 (missing permission), 404 (project not found).
+
+---
+
 ### Labor · Supplement Hours
 
 Per-day supplement hours (0–12) accumulate across the current calendar month per worker. At summary time the total is converted to bonus days using pure Python arithmetic — no phantom rows, no monthly close job.

@@ -52,6 +52,21 @@ Workers can accrue banked supplement hours (0–12 per day) alongside or instead
 
 Conversion is entirely derived at read time — no background job, no monthly close action. Residual hours under 4 at month boundary are discarded with no carry-over.
 
+## 4c. Labor · Export (Excel / PDF)
+
+URL: `GET /api/v1/projects/{projectId}/labor-export?from=YYYY-MM&to=YYYY-MM&format=xlsx|pdf`
+
+Exports labor data for a project over a 1-to-24-month window. Two formats:
+
+- **xlsx** — one sheet per month (daily attendance detail + per-worker totals) plus a Summary sheet aggregating priced and bonus costs across the range. Uses fr-FR number format (`[$€-fr-FR]`) for currency cells.
+- **pdf** — A4 portrait; KPI mini-table at the top followed by a per-worker monthly breakdown. Uses bundled DejaVu Sans fonts so Vietnamese diacritics render correctly.
+
+Both formats display "Priced cost" and "Bonus cost" as separate columns — no single aggregated "Total" that could obscure the split. Any combined figure is explicitly labeled "Total (priced + bonus)".
+
+The filename is slugified from the project name and the requested date range (e.g. `downtown-office-2026-01-2026-03.xlsx`). The response streams directly as an attachment (`Content-Disposition: attachment`); no temporary file is written to disk.
+
+Authentication: JWT cookie or Bearer token, `project:read` permission required.
+
 ## 5. Project Invoices
 
 URL: `/{locale}/projects/{projectId}/invoices`
