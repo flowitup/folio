@@ -66,6 +66,20 @@
 | `/api/v1/notifications` | GET | JWT | List due reminders for current user across all projects |
 | `/api/v1/notifications/:note_id/dismiss` | POST | JWT + member | Dismiss a reminder for current user |
 
+## Labor · Supplement Hours
+
+| Endpoint | Method | Change | Notes |
+|---|---|---|---|
+| `/api/v1/projects/<project_id>/labor-entries` | POST | gains `supplement_hours: int (0..12)`; `shift_type` now optional | `chk_labor_entry_nonempty` rejects both fields absent; `chk_labor_supplement_hours_range` enforces 0–12 |
+| `/api/v1/projects/<project_id>/labor-entries/<entry_id>` | PUT | gains `supplement_hours` | same validators |
+| `/api/v1/projects/<project_id>/labor-summary` | GET | response gains per-worker `banked_hours`, `bonus_full_days`, `bonus_half_days`, `bonus_cost`; top-level `total_banked_hours`, `total_bonus_days`, `total_bonus_cost` | additive, backward-compatible |
+
+**Schema delta (migration `20a22df3582d`):**
+- `supplement_hours INT NOT NULL DEFAULT 0` added to `labor_entries`
+- `shift_type` made nullable (was NOT NULL)
+- CHECK `chk_labor_supplement_hours_range`: `supplement_hours >= 0 AND supplement_hours <= 12`
+- CHECK `chk_labor_entry_nonempty`: `shift_type IS NOT NULL OR supplement_hours > 0`
+
 ---
 
 ### Domain Entities

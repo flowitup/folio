@@ -78,6 +78,33 @@ Dismissals:
 
 **Polling** — bell-icon polls every 60s ±10s (jitter). Pauses when `document.hidden`. `Cache-Control: no-cache, must-revalidate` on the polling endpoint.
 
+### Labor · Supplement Hours
+
+Per-day supplement hours (0–12) accumulate across the current calendar month per worker. At summary time the total is converted to bonus days using pure Python arithmetic — no phantom rows, no monthly close job.
+
+**Conversion formula:**
+```
+bonus_full  = banked_hours // 8
+bonus_half  = 1 if (banked_hours % 8) >= 4 else 0
+```
+
+**Thresholds:**
+
+| Banked hours (month) | Bonus full days | Bonus half days |
+|---|---|---|
+| 0–3 | 0 | 0 |
+| 4–7 | 0 | 1 |
+| 8–11 | 1 | 0 |
+| 12–15 | 1 | 1 |
+| 16+ | banked // 8 | 1 if remainder ≥ 4 |
+
+**Key properties:**
+- Pure-derived: conversion computed at read time in `GetLaborSummaryUseCase`; no persisted phantom rows and no monthly close action.
+- Standalone entries allowed: `shift_type` is nullable; a row with `shift_type IS NULL` and `supplement_hours > 0` is a supplement-only entry. Override-without-shift (shift_type present but `supplement_hours` = 0 override) is valid; the only rejected case is both fields absent.
+- Validation: `supplement_hours ∈ [0, 12]` (CHECK constraint `chk_labor_supplement_hours_range`); `shift_type IS NOT NULL OR supplement_hours > 0` (CHECK constraint `chk_labor_entry_nonempty`).
+- Month boundary reset: banked hours are summed over the queried date range; residual < 4h at end of month is discarded (no carry-over).
+- Migration: `20a22df3582d` — adds `supplement_hours INT NOT NULL DEFAULT 0`, makes `shift_type` nullable, adds 2 CHECK constraints.
+
 ## Invitation Lifecycle (invite-only signup)
 
 ```

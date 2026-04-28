@@ -44,6 +44,14 @@ The screenshot captures the Workers tab populated with the seeded crew (Jean Dup
 
 Screenshot: `screenshots/labor.jpg`
 
+## 4b. Labor · Supplement hours
+
+URL: `/{locale}/projects/{projectId}/labor` (Attendance tab)
+
+Workers can accrue banked supplement hours (0–12 per day) alongside or instead of a shift. Across the calendar month the hours accumulate; every 8h converts to 1 bonus full-day, every 4h remainder to 1 bonus half-day. The Summary tab reflects per-worker `banked_hours`, `bonus_full_days`, `bonus_half_days`, and `bonus_cost` alongside the existing totals. Supplement-only entries (no shift type) are supported — useful for partial-day or on-call situations where the worker has no formal shift code.
+
+Conversion is entirely derived at read time — no background job, no monthly close action. Residual hours under 4 at month boundary are discarded with no carry-over.
+
 ## 5. Project Invoices
 
 URL: `/{locale}/projects/{projectId}/invoices`

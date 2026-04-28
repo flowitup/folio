@@ -67,6 +67,7 @@ construction-back-end/
 - ✅ Invitation module — invite-only account creation: admins invite users to projects with per-project roles via tokenized email links (Resend, 7-day expiry, single-use); `app/application/invitations/`, `app/infrastructure/email/`, `app/api/v1/invitations/`; frontend `accept-invite/[token]` (public) + `(app)/projects/[id]/members` (admin)
 - ✅ Superadmin bulk-add — `*:*` admins add an existing user to multiple projects with one role applied across all; partial-success per-project results + consolidated email; `app/application/admin/`, `app/api/v1/admin/`; frontend `(app)/admin/users` page (superadmin-only) with debounced user search
 - ✅ Notes + in-app notifications — per-project shared notes with due-date reminders; lazy SQL computation (no worker/no notifications table); BE: `app/application/notes/` (8 use-cases) + `app/api/v1/notes/` + `app/api/v1/notifications/`; FE: `src/app/[locale]/(app)/projects/[id]/notes/` (agenda + inline-editable rows) + `src/components/notifications/` (bell + 60s polling)
+- ✅ Labor supplement hours — per-day banked hours (0–12) accumulate across the month; every 8h auto-converts to 1 bonus full-day, 4h remainder to 1 bonus half-day. Standalone supplement-only entries supported (no shift required). Migration `20a22df3582d`; `app/application/labor/`; conversion is pure-derived (no persisted phantom rows).
 
 ### In Progress (Phase 09)
 - 🔄 Frontend login UI & form components
