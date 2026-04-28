@@ -1,0 +1,11 @@
+# Defense-in-depth: never commit env files at the parent level.
+# Submodules (folio-back-end, folio-front-end) have their own .gitignore
+# entries; this catches anything that lands in the parent root by mistake.
+.env
+.env.*
+
+# macOS noise
+.DS_Store
+
+# Local Claude Code worktrees + scratch
+.claude/worktrees/
