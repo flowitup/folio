@@ -79,12 +79,18 @@
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/api/v1/projects/<id>/labor-export?from=YYYY-MM&to=YYYY-MM&format=xlsx\|pdf` | jwt + project:read | sync streaming, 24-month cap, 422/403/404 paths |
+| GET | `/api/v1/projects/<id>/labor-export?from=YYYY-MM&to=YYYY-MM&format=xlsx\|pdf` | jwt + project:read + project membership | sync streaming, 24-month cap, per-user rate limit (5/min, `key_func=jwt_user_key`), 422/403/404 paths |
+| GET | `/api/v1/projects/<id>/workers/<worker_id>/labor-export?from=YYYY-MM&to=YYYY-MM&format=xlsx\|pdf` | jwt + project:read + project membership | single-worker scope; one-sheet xlsx, PDF parity (no daily detail); 404 `worker_not_found` (cross-project) / `worker_inactive` (deactivated); 422 `invalid_worker_id` (bad UUID); same per-user rate limit as project-wide |
 
 **New BE dependencies (prod):** `openpyxl`, `reportlab`, `python-slugify`
 **New BE dependencies (dev/test):** `pypdf`
 **New FE dependencies:** none (uses existing shadcn primitives)
 **Bundled assets:** DejaVu Sans + Bold TTF (~1.4 MB) at `app/domain/labor/export/fonts/` — Bitstream Vera + DejaVu open-font license
+
+**Security hardening shipped with single-worker scope (also applied to project-wide route):**
+- `@require_project_access()` membership check — `project:read` claim alone is no longer sufficient
+- Per-user rate-limit key (`jwt_user_key`) — was per-IP
+- `xml.sax.saxutils.escape` for `project_name` / `worker_name` / `generated_by_email` before ReportLab Paragraph interpolation
 
 ---
 

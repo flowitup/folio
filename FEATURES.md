@@ -67,6 +67,25 @@ The filename is slugified from the project name and the requested date range (e.
 
 Authentication: JWT cookie or Bearer token, `project:read` permission required.
 
+## 4d. Labor · Single-worker export
+
+URL: `GET /api/v1/projects/{projectId}/workers/{workerId}/labor-export?from=YYYY-MM&to=YYYY-MM&format=xlsx|pdf`
+
+UI: a Download icon on each active worker row of the labor page (`/{locale}/projects/{projectId}/labor`) opens an export dialog scoped to that single worker. Title shows the worker name, subtitle shows their daily rate; the same from/to/format inputs as the project-wide dialog drive the request.
+
+Output:
+- **xlsx** — one sheet (sanitized worker name as title) with header (project, worker, rate, range, generated-at), monthly summary table for the worker, and daily detail table sorted by date.
+- **pdf** — A4 portrait, header includes a `Worker: {name}    Rate: {rate}/day` line, KPI mini-table + breakdown of the worker's totals; no daily detail (parity with the project-wide PDF).
+
+Filename pattern: `labor-{project-slug}-{worker-slug}-{from}-to-{to}.{ext}` — slugifier falls back to the first 8 chars of the UUID when the name is pure CJK or emoji.
+
+Security:
+- `@jwt_required + @require_permission("project:read") + @require_project_access()` — caller must be a member of the specific project, not just hold the `project:read` claim.
+- Per-user rate limit (5/min, `key_func=jwt_user_key`) — separate bucket per user, not per IP.
+- ReportLab `Paragraph` user-input is XML-escaped to prevent crashes on `<` and prevent markup injection.
+- Inactive worker → 404 `worker_inactive` (the FE button is already gated on `is_active`; this is defense-in-depth).
+- Cross-project worker → 404 `worker_not_found`.
+
 ## 5. Project Invoices
 
 URL: `/{locale}/projects/{projectId}/invoices`

@@ -70,6 +70,7 @@ construction-back-end/
 - ✅ Settings: Users tab (7th, moved from /admin/users) — superadmin (`*:*`) sees the bulk-add form for assigning roles to existing users across projects; non-superadmin sees an inline permission-denied panel. /admin/users route deleted.
 - ✅ Labor supplement hours — per-day banked hours (0–12) accumulate across the month; every 8h auto-converts to 1 bonus full-day, 4h remainder to 1 bonus half-day. Standalone supplement-only entries supported (no shift required). Migration `20a22df3582d`; `app/application/labor/`; conversion is pure-derived (no persisted phantom rows).
 - ✅ Labor export — per-project Excel/PDF export over a 1..24-month range; includes daily detail (xlsx) + per-worker monthly summary with priced/bonus split (no aggregated total); real Vietnamese/French i18n; `app/domain/labor/export/`; bundled DejaVu fonts for Vietnamese diacritics.
+- ✅ Labor export — single-worker scope — `GET /api/v1/projects/<id>/workers/<worker_id>/labor-export`; one-sheet xlsx (worker header + monthly summary + daily detail) and matching pdf header; per-worker Download trigger on the labor page worker list; ships with cross-project membership enforcement (`@require_project_access`), per-user rate-limit (`key_func=jwt_user_key`), `xml.sax.saxutils.escape` defense for ReportLab Paragraph, and a 404 `worker_inactive` block on inactive workers.
 
 ### In Progress (Phase 09)
 - 🔄 Frontend login UI & form components

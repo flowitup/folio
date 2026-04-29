@@ -127,6 +127,28 @@ HTTP GET → Pydantic LaborExportRequest (regex + range validator: 1..24 months)
 
 **"No aggregated Total" rule:** every cost breakdown uses explicit "Priced cost" + "Bonus cost" labels; any combined figure is labeled "Total (priced + bonus)" — no bare "Total" that could mislead readers.
 
+#### Single-worker scope
+
+**Endpoint:** `GET /api/v1/projects/<id>/workers/<worker_id>/labor-export?from=YYYY-MM&to=YYYY-MM&format=xlsx|pdf`
+**Auth:** `@jwt_required + @require_permission("project:read") + @require_project_access()` (membership, not just claim)
+**Rate limit:** `5 per minute, key_func=jwt_user_key` (per-user; same on the project-wide route)
+
+`ExportLaborUseCase` accepts an optional `worker_id`. When set, the use-case validates `worker.project_id == project_id` AND `worker.is_active`, scopes summary + daily-entry queries to that worker, populates `ExportContext.worker_name` + `worker_daily_rate`, and renders a single-sheet xlsx (worker header + monthly summary + daily detail) or single-section pdf (no daily detail — parity with project-wide PDF).
+
+**Filename:** `labor-{project-slug}-{worker-slug}-{from}-to-{to}.{ext}` — slugifier falls back to the first 8 chars of the project / worker UUID when the name is pure CJK / emoji.
+
+**Security shipped with this endpoint** (also applied to the existing project-wide route, defense-in-depth):
+- **Membership check** — `@require_project_access()` decorator added below `@require_permission("project:read")`. Prior behaviour: any seat with the `project:read` claim could export any project. Now the caller must be a member of the specific project.
+- **Per-user rate-limit key** — was per-IP via `get_remote_address`; now `key_func=jwt_user_key` so NAT/proxy users no longer share buckets and IP rotation no longer bypasses the limit.
+- **ReportLab Paragraph escaping** — `xml.sax.saxutils.escape` wraps all user-controlled strings (`project_name`, `worker_name`, `generated_by_email`) before Paragraph interpolation. Prior behaviour: `<` in a name crashed PDF build via SAX parser; `<b>...</b>` rendered formatted text.
+- **Inactive worker block** — `WorkerInactiveError(WorkerNotFoundError)` raised in the use-case when `worker.is_active is False`; route maps to 404 with `error: "worker_inactive"`. The FE button is already gated on `is_active`; this is the defense-in-depth against direct API calls.
+
+**Font registration** — moved from a lazy `_FONT_REGISTERED` flag to module-load time; eliminates the double-registration race on first concurrent PDF builds.
+
+**Requester identity helper** — `app/api/_helpers/requester_identity.py:get_requester_email(user_repository)` deduplicated across both export routes (JWT carries no `email` claim, so DB lookup is mandatory but no longer copy-pasted).
+
+**Frontend trigger** — Download icon on each `worker-list` row (gated on `worker.is_active`) opens the unified `LaborExportDialog` with an optional `worker?: Worker | null` prop. The same component handles project-wide and per-worker export; `fetchExportFile(url, range, format)` is the private helper both `fetchLaborExport` and `fetchWorkerLaborExport` delegate to.
+
 **Error paths:** 422 (invalid params / range > 24 months), 403 (missing permission), 404 (project not found).
 
 ---
