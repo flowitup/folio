@@ -153,6 +153,60 @@ HTTP GET → Pydantic LaborExportRequest (regex + range validator: 1..24 months)
 
 ---
 
+### Invoices · Monthly Export (Excel / PDF)
+
+**Endpoint:** `GET /api/v1/projects/<id>/invoices-export?from=YYYY-MM&to=YYYY-MM&format=xlsx|pdf[&type=client|labor|supplier]`
+**Auth:** `@jwt_required + @require_permission("project:read") + @require_project_access()` (membership, not just claim)
+**Rate limit:** `5 per minute, key_func=jwt_user_key`
+
+```
+HTTP GET → Pydantic ExportInvoicesQuery (regex 1900-2199 + range validator: 1..24 months + optional type)
+        → ExportInvoicesUseCase
+            ├─ ProjectRepository.find_by_id              (404 ProjectNotFoundError if missing)
+            └─ InvoiceRepository.find_by_project_in_range(project_id, date_from, date_to, type_filter)
+                ├─ aggregate per-type subtotals + grand_total in Decimal (no float drift)
+                ├─ sort (issue_date, type.value, invoice_number) for deterministic output
+                ├─ build InvoiceBundle + InvoiceExportContext
+                └─ dispatch:
+                     xlsx → app.domain.invoice.export.xlsx_builder.build_xlsx
+                          ├─ Summary sheet (header band, KPIs, per-type subtotals,
+                          │  invoice list, GRAND TOTAL band)
+                          └─ one sheet per type that EXISTS in range (skip empty)
+                     pdf  → app.domain.invoice.export.pdf_builder.build_pdf
+                          ├─ Page 1: summary (header, meta, KPIs, subtotals, invoice index)
+                          └─ Pages 2..N+1: one polished invoice per page
+                             (header band, INVOICE title, meta block, items table
+                              with zebra rows, grand-total band, notes)
+        → send_file(stream, attachment=True, mimetype, download_name)
+            + Cache-Control: no-store, must-revalidate
+            + X-Content-Type-Options: nosniff
+```
+
+**Filename:** `invoices-{project-slug}-{from}-to-{to}[-{type}].{ext}` — type suffix only when the filter is set; slugifier reused from labor (`slugify_project_name`).
+
+**Cross-package font reuse** — pdf_builder computes `_FONTS_DIR = Path(__file__).resolve().parent.parent.parent / "labor" / "export" / "fonts"` to share the bundled DejaVu Sans + Bold TTFs (~1.4 MB) with labor instead of duplicating them. Documented at the top of `pdf_builder.py`; if labor moves, update that path.
+
+**Empty range path** — both xlsx and pdf render a clean `No invoices in range YYYY-MM to YYYY-MM` message; per-type sheets are skipped when their type has zero invoices (so a `?type=labor` export never produces empty Client / Supplier sheets).
+
+**Currency rule (LOCKED)** — every monetary value is aggregated in `Decimal` and only cast to `float` at the openpyxl-cell-write boundary. xlsx cells store raw float values with `EUR_FR_FORMAT` so Excel can sort and sum them; never write pre-formatted strings. PDF formats Decimals via `format_eur_fr` (`1 234,56 €`, fr-FR). `test_grand_total_decimal_precision` directly asserts `3 × Decimal("0.10") == Decimal("0.30")` exactly.
+
+**XML-escape defense** — `xml.sax.saxutils.escape` wraps every user-supplied string before ReportLab `Paragraph` interpolation: project name, recipient name, recipient address, invoice number, item descriptions, notes. Covered by `test_special_chars_xml_escaped` (recipient = `<script>alert(1)</script>` produces a valid PDF with the tag rendered as escaped text).
+
+**Frontend trigger** — `Export range` button on the project Invoices page header opens `InvoiceExportDialog` (date range + type filter + xlsx/pdf toggle). The active list-tab type carries through as `initialType`. Dialog calls `fetchInvoiceExport(projectId, range, format, typeFilter?)` which streams the binary blob → `triggerBrowserDownload(blob, filename)`.
+
+**i18n** — `invoices.export.*` (20 keys × en / fr / vi at strict parity, real Vietnamese: "Khách hàng" / "Nhân công" / "Nhà cung cấp" for the type filter). Vietnamese `summaryLine` is non-pluralised by intent (no plural noun morphology); en + fr use ICU plural.
+
+**Shipped this cycle, also back-ported to labor:**
+- `${apiBaseUrl}/api/v1/...` double-prefix bug — `NEXT_PUBLIC_API_BASE_URL` already includes `/api/v1`, so the literal in `fetchInvoiceExport` / `fetchLaborExport` / `fetchWorkerLaborExport` was producing `/api/v1/api/v1/projects/...` → 404 against the Flask blueprint mounted at `/api/v1`. Dropped the literal in all three; added URL-pinning regex assertions (`toMatch(/\/api\/v1\/projects\/[^/]+\/.../) + not.toMatch(/api\/v1\/api\/v1/)`) in unit tests so future drift fails CI.
+- YYYY-MM regex tightened to `^(19|20|21)\d{2}-(0[1-9]|1[0-2])$` on both `ExportInvoicesQuery` and `ExportLaborQuery` — closes a 500 path where `from=to=0000-01` survived validation and crashed `_parse_yyyy_mm` with `year 0 is out of range`.
+- `format_validation_error(exc) -> tuple[Response, int]` extracted to `app/api/_helpers/pydantic_errors.py`; invoice + both labor export routes now share it (3 byte-identical copies dedup'd).
+- `parseFilenameFromContentDisposition(header, fallback) -> string` extracted to `src/lib/api/_helpers/content-disposition.ts`; `fetchInvoiceExport` and the labor exporters import it (RFC 6266 `filename*=UTF-8''…` + plain `filename="…"` parser).
+- Admin test fixtures (invoice + labor export API tests) no longer grant `*:*`, so the route's `@require_permission("project:read")` is actually exercised.
+
+**Error paths:** 422 (invalid params / range > 24 months / unknown type / out-of-range year), 403 (missing permission), 404 (project not found / cross-project access).
+
+---
+
 ### Labor · Supplement Hours
 
 Per-day supplement hours (0–12) accumulate across the current calendar month per worker. At summary time the total is converted to bonus days using pure Python arithmetic — no phantom rows, no monthly close job.

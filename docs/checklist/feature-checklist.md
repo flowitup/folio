@@ -94,6 +94,25 @@
 
 ---
 
+## Invoices · Monthly Export (Excel / PDF)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/projects/<id>/invoices-export?from=YYYY-MM&to=YYYY-MM&format=xlsx\|pdf[&type=client\|labor\|supplier]` | jwt + project:read + project membership | sync streaming, 24-month cap, per-user rate limit (5/min, `key_func=jwt_user_key`); xlsx = Summary + per-type sheets (skips empty types); pdf = summary page + ONE polished invoice per page; empty range renders clean "No invoices in range" message; 422 (invalid YYYY-MM / range > 24 / unknown type / year out of 1900-2199), 403, 404 paths |
+
+**New BE dependencies:** none (reuses `openpyxl`, `reportlab`, `python-slugify` from labor)
+**New FE dependencies:** none (reuses `triggerBrowserDownload`, shadcn primitives, `formatEUR`)
+**Bundled assets:** none (cross-package font reuse from `app/domain/labor/export/fonts/`)
+
+**Cross-cutting fixes shipped with this feature (also applied to labor):**
+- `${apiBaseUrl}/api/v1/...` → `${apiBaseUrl}/...` — `NEXT_PUBLIC_API_BASE_URL` already includes `/api/v1`; the literal was producing `/api/v1/api/v1/projects/...` → 404. Fixed in `fetchInvoiceExport`, `fetchLaborExport`, `fetchWorkerLaborExport`. URL-pinning regex assertions added in 3 unit-test files so future drift fails CI.
+- YYYY-MM regex tightened to `^(19|20|21)\d{2}-(0[1-9]|1[0-2])$` on both `ExportInvoicesQuery` and `ExportLaborQuery`. Previously `from=to=0000-01` → 500 via `date(0, 1, 1)`.
+- `format_validation_error(exc)` extracted to `app/api/_helpers/pydantic_errors.py`; invoice + both labor export routes share it.
+- `parseFilenameFromContentDisposition` extracted to `src/lib/api/_helpers/content-disposition.ts`; invoice + labor exporters share it.
+- Admin test fixtures no longer grant `*:*`, so `@require_permission("project:read")` is actually exercised by tests.
+
+---
+
 ## Labor · Supplement Hours
 
 | Endpoint | Method | Change | Notes |
