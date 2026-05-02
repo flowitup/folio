@@ -15,6 +15,13 @@ origincert: /etc/cloudflared/cert.pem
 
 # Ingress rules — ORDER MATTERS. First match wins. Always end with a catch-all.
 ingress:
+  # Flask API health endpoint — back-end exposes /health at root (not /api/v1).
+  # Used by Cloud Monitoring uptime check and (optionally) Cloudflare's own
+  # origin-health probes. Must come BEFORE the Next.js fallthrough.
+  - hostname: folio.flowitup.com
+    path: ^/health$
+    service: http://localhost:5000
+
   # Flask API — anything under /api/*
   - hostname: folio.flowitup.com
     path: ^/api/.*

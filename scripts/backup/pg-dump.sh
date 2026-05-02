@@ -30,8 +30,9 @@ POSTGRES_DB=$(/usr/bin/awk -F= '/^POSTGRES_DB=/ {print $2}' "$ENV_FILE")
 # tokenCreator on backup-sa; backup-sa has objectCreator on the bucket only.
 export CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT="$BACKUP_SA"
 
-# Find postgres container (allow-list-style: must contain 'postgres').
-PG_CTR=$(/usr/bin/docker ps --filter 'name=postgres' --format '{{.Names}}' | head -1)
+# Find postgres container by image ancestor (compose names it `<project>-db-1`,
+# not anything containing "postgres" — so filter on the underlying image).
+PG_CTR=$(/usr/bin/docker ps --filter 'ancestor=postgres:16-alpine' --format '{{.Names}}' | head -1)
 [[ -n "$PG_CTR" ]] || { log "ERROR: no postgres container running"; exit 2; }
 
 DATE=$(date -u +%F)
@@ -43,15 +44,16 @@ log "starting dump: $POSTGRES_DB → $DEST (via $PG_CTR, as $BACKUP_SA)"
 # pg_dump -Fc = custom format (already internally compressed; no extra gzip needed).
 # Stream stdout → gsutil stdin → no temp file on disk.
 # `set -o pipefail` on `set -e` catches mid-pipe failures.
+# gsutil cp does CRC32 validation built-in; if it returns 0, the object landed.
+# Use `gcloud storage cp` (newer than gsutil) — needs only objects.create on
+# the destination object, doesn't probe with a list call like gsutil does.
 if ! /usr/bin/docker exec "$PG_CTR" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc \
-     | /usr/bin/gsutil -q cp - "$DEST"; then
+     | /usr/bin/gcloud storage cp - "$DEST" 2>&1 >/dev/null; then
   log "ERROR: dump or upload failed"
   exit 3
 fi
 
-# Verify by reading object metadata back (tests both write succeeded and
-# backup-sa impersonation is working end-to-end).
-SIZE=$(/usr/bin/gsutil du -s "$DEST" 2>/dev/null | /usr/bin/awk '{print $1}')
-[[ -n "$SIZE" && "$SIZE" -gt 0 ]] || { log "ERROR: uploaded object 0 bytes or unreadable"; exit 4; }
-
-log "ok: $KEY (${SIZE} bytes)"
+# We don't verify size after upload — backup-sa is append-only (no list/get
+# perms by design, ransomware protection). Validation happens weekly via
+# verify-latest-dump.sh, which runs as vm-runtime-sa with read access.
+log "ok: uploaded $KEY"

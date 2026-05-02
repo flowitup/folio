@@ -20,7 +20,7 @@ set -euo pipefail
 PROJECT_ID="${PROJECT_ID:-flowitup-folio-prod}"
 ALERT_EMAIL="${ALERT_EMAIL:-mt.bui.fr@gmail.com}"
 HEALTH_URL_HOST="${HEALTH_URL_HOST:-folio.flowitup.com}"
-HEALTH_URL_PATH="${HEALTH_URL_PATH:-/api/v1/health}"
+HEALTH_URL_PATH="${HEALTH_URL_PATH:-/health}"  # Flask exposes /health at root, not /api/v1/health
 UPTIME_CHECK_NAME="folio-prod-health"
 ALERT_NAME_UPTIME="Folio prod — health endpoint down"
 ALERT_NAME_DISK="Folio prod — disk usage > 85%"

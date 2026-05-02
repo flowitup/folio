@@ -36,7 +36,7 @@ Production deploy of the Folio app to GCP using the Option A architecture agreed
 | 6 | [Secrets Management](./phase-06-secrets-management.md) | Complete (2026-05-03) |
 | 7 | [Backup Strategy](./phase-07-backup-strategy.md) | Code complete (2026-05-03) — VM-side smoke-test deferred to phase 9 |
 | 8 | [Observability](./phase-08-observability.md) | Code complete (2026-05-03) — uptime alert snoozed until phase 9 |
-| 9 | [First Deploy](./phase-09-first-deploy.md) | Pending |
+| 9 | [First Deploy](./phase-09-first-deploy.md) | Complete (2026-05-03) — admin login + /health 200 + pg-dump verified |
 | 10 | [Restore Drill](./phase-10-restore-drill.md) | Pending |
 | 11 | [Runbook](./phase-11-runbook.md) | Pending |
 
