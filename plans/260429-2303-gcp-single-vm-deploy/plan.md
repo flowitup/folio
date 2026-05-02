@@ -33,9 +33,9 @@ Production deploy of the Folio app to GCP using the Option A architecture agreed
 | 3 | [VM Bootstrap](./phase-03-vm-bootstrap.md) | Complete (2026-04-30) |
 | 4 | [Cloudflare Wiring](./phase-04-cloudflare-wiring.md) | Complete (2026-04-30) |
 | 5 | [CI/CD Pipeline](./phase-05-ci-cd-pipeline.md) | Code complete (2026-04-30) — operator wiring deferred |
-| 6 | [Secrets Management](./phase-06-secrets-management.md) | Pending |
-| 7 | [Backup Strategy](./phase-07-backup-strategy.md) | Pending |
-| 8 | [Observability](./phase-08-observability.md) | Pending |
+| 6 | [Secrets Management](./phase-06-secrets-management.md) | Complete (2026-05-03) |
+| 7 | [Backup Strategy](./phase-07-backup-strategy.md) | Code complete (2026-05-03) — VM-side smoke-test deferred to phase 9 |
+| 8 | [Observability](./phase-08-observability.md) | Code complete (2026-05-03) — uptime alert snoozed until phase 9 |
 | 9 | [First Deploy](./phase-09-first-deploy.md) | Pending |
 | 10 | [Restore Drill](./phase-10-restore-drill.md) | Pending |
 | 11 | [Runbook](./phase-11-runbook.md) | Pending |
