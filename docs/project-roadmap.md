@@ -1,8 +1,14 @@
 # Construction Management System - Project Roadmap
 
-**Last Updated:** 2026-04-22
-**Current Phase:** 08 (Domain Modules - Complete)
-**Overall Progress:** 65% (Frontend), 85% (Backend)
+**Last Updated:** 2026-05-03
+**Current Phase:** Production deploy live (Option A, GCP)
+**Overall Progress:** 65% (Frontend), 85% (Backend), Infra: 100%
+
+## Milestones
+
+- ✅ 2026-05-03: **Production deploy live** at https://folio.flowitup.com
+  (Option A — single GCE VM in europe-west1, fronted by Cloudflare Tunnel,
+  fully documented in `docs/deployment-guide.md`).
 
 ## Roadmap Overview
 
