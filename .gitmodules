@@ -1,0 +1,6 @@
+[submodule "folio-back-end"]
+	path = folio-back-end
+	url = https://github.com/flowitup/folio-back-end.git
+[submodule "folio-front-end"]
+	path = folio-front-end
+	url = https://github.com/flowitup/folio-front-end.git
