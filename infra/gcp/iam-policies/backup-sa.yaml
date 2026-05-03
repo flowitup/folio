@@ -1,0 +1,42 @@
+# backup-sa — write-only identity for nightly backups.
+# Source of truth for IAM bindings; mirrored imperatively by ../bootstrap.sh.
+serviceAccount: backup-sa@flowitup-folio-prod.iam.gserviceaccount.com
+purpose: |
+  Used exclusively by backup scripts on the VM via
+  `--impersonate-service-account=backup-sa@...`. Append-only writer to backup
+  buckets. Cannot delete or modify existing objects — protects against
+  ransomware and "rm -rf" mistakes from a compromised VM.
+keys:
+  - type: GCS HMAC
+    rationale: |
+      mc (MinIO client) speaks S3 protocol, not native GCS. HMAC is the
+      documented carve-out for S3-compatible tools. Native gcloud/gsutil
+      callers (pg-dump uploader) use impersonation, not HMAC.
+    storedIn: Secret Manager (folio-gcs-hmac-access-key, folio-gcs-hmac-secret-key)
+    mintedBy: bootstrap.sh --rotate-hmac
+    rotation: 90 days
+roles:
+  - role: roles/storage.objectCreator
+    scope: bucket gs://flowitup-folio-prod-backups
+    note: write side — creates new objects, cannot delete
+  - role: roles/storage.objectViewer
+    scope: bucket gs://flowitup-folio-prod-backups
+    note: |
+      Required by both gsutil cp and gcloud storage cp — both probe existing
+      object metadata (HEAD/GET) before writing. objectCreator alone yields
+      HTTP 403 storage.objects.get during cp. Minor compromise vs original
+      write-only design, offset by:
+        - backup-sa still cannot DELETE or OVERWRITE-VIA-DIFFERENT-VERSION
+        - bucket retention policy (7d locked) prevents true delete
+        - bucket versioning ON (Phase 1) keeps prior versions for 30d
+  - role: roles/storage.objectCreator
+    scope: bucket gs://flowitup-folio-prod-backups-archive
+    note: write-only — long-term archive, no read needed (backup writes once)
+mustNotHave:
+  - roles/storage.objectAdmin
+  - roles/storage.admin
+  - roles/storage.objectUser   # would grant delete
+  - any project-level role
+bucketProtections:
+  - gs://flowitup-folio-prod-backups: 7-day retention lock + uniform bucket-level access
+  - gs://flowitup-folio-prod-backups-archive: 365-day retention lock + uniform bucket-level access

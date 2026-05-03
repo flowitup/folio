@@ -1,0 +1,28 @@
+[Unit]
+Description=Render /opt/folio/.env from Google Secret Manager
+Documentation=https://github.com/flowitup/folio (infra/gcp/scripts/render-env.sh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Oneshot — run on demand during rotation, not on a timer (Y2 dropped the
+# daily timer; rewriting .env without `compose up -d --force-recreate` is
+# security theater).
+Type=oneshot
+ExecStart=/opt/folio/scripts/render-env.sh
+
+# gcloud needs a writable config dir for its cache (gce_metadata, credential
+# probe, etc). With ProtectHome=true the default ~/.config/gcloud is sealed
+# off, so redirect to PrivateTmp's per-invocation /tmp. Re-created fresh on
+# every run, torn down on exit — no state, no leak.
+Environment=CLOUDSDK_CONFIG=/tmp/gcloud-config
+
+# Hardening — render-env.sh only needs to read SM (network) and write one file.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/folio
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

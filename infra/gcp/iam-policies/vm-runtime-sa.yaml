@@ -1,0 +1,30 @@
+# vm-runtime-sa — attached identity on the prod VM.
+# Source of truth for IAM bindings; mirrored imperatively by ../bootstrap.sh.
+serviceAccount: vm-runtime-sa@flowitup-folio-prod.iam.gserviceaccount.com
+purpose: |
+  Workload identity attached to GCE VM (no JSON key):
+   - pull images from Artifact Registry
+   - read app secrets from Secret Manager (per-secret bindings, set in phase 6)
+   - emit logs / metrics
+   - impersonate backup-sa for nightly backups
+key:
+  type: none
+  rationale: VM-attached SA exposes credentials via metadata server; no key files.
+roles:
+  - role: roles/artifactregistry.reader
+    scope: project (flowitup-folio-prod)
+  - role: roles/logging.logWriter
+    scope: project (flowitup-folio-prod)
+  - role: roles/monitoring.metricWriter
+    scope: project (flowitup-folio-prod)
+  - role: roles/secretmanager.secretAccessor
+    scope: per-secret (deferred to phase 6)
+    note: avoid project-level grant; bind individually as each secret is minted.
+  - role: roles/iam.serviceAccountTokenCreator
+    scope: serviceAccount/backup-sa
+    note: lets backup scripts run as backup-sa via --impersonate-service-account.
+mustNotHave:
+  - any role granting write/delete on flowitup-folio-prod-backups*
+  - roles/iam.serviceAccountKeyAdmin
+  - roles/owner
+  - roles/editor

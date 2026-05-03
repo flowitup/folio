@@ -1,0 +1,50 @@
+# Cloudflare Tunnel ingress config for folio.flowitup.com.
+# Installed at /etc/cloudflared/config.yml on the prod VM.
+#
+# Tunnel is referenced by NAME (not UUID); cloudflared resolves via cert.pem.
+# Operator runbook: infra/cloudflare/page-rules.md (sections 1–2).
+#
+# After editing, restart the daemon:  sudo systemctl restart cloudflared
+
+tunnel: flowitup-folio-prod
+credentials-file: /etc/cloudflared/credentials.json
+# Origin cert — needed when `tunnel:` is referenced by NAME (cloudflared
+# resolves name→UUID via CF API). Pinning here removes systemd's reliance on
+# /root/.cloudflared/cert.pem, which an unattended root daemon can't see.
+origincert: /etc/cloudflared/cert.pem
+
+# Ingress rules — ORDER MATTERS. First match wins. Always end with a catch-all.
+ingress:
+  # Flask API health endpoint — back-end exposes /health at root (not /api/v1).
+  # Used by Cloud Monitoring uptime check and (optionally) Cloudflare's own
+  # origin-health probes. Must come BEFORE the Next.js fallthrough.
+  - hostname: folio.flowitup.com
+    path: ^/health$
+    service: http://localhost:5000
+
+  # Flask API — anything under /api/*
+  - hostname: folio.flowitup.com
+    path: ^/api/.*
+    service: http://localhost:5000
+
+  # Next.js frontend — everything else on the app host
+  - hostname: folio.flowitup.com
+    service: http://localhost:3000
+
+  # MinIO (S3-compatible) — dedicated subdomain for presigned uploads/downloads.
+  # Path-style URLs: https://cdn.flowitup.com/<bucket>/<key>?X-Amz-Signature=…
+  # Decision: separate host (not /uploads on app domain) for clean WAF/cache
+  # rules per host and to avoid path collisions with Next.js.
+  - hostname: cdn.flowitup.com
+    service: http://localhost:9000
+
+  # Catch-all — required terminator. Anything else returns 404 at the edge.
+  - service: http_status:404
+
+# Optional: tune origin connect timeouts. Defaults are usually fine; uncomment
+# if you see "context deadline exceeded" in cloudflared logs under load.
+# originRequest:
+#   connectTimeout: 30s
+#   tlsTimeout:     10s
+#   keepAliveConnections: 100
+#   keepAliveTimeout:     90s

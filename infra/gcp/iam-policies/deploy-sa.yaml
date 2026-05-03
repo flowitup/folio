@@ -1,0 +1,24 @@
+# deploy-sa — GitHub Actions runner identity.
+# Source of truth for IAM bindings; mirrored imperatively by ../bootstrap.sh.
+serviceAccount: deploy-sa@flowitup-folio-prod.iam.gserviceaccount.com
+purpose: |
+  CI/CD from ubuntu-latest GitHub runner:
+   - push/pull images to Artifact Registry
+   - SSH into prod VM via IAP tunnel (no public 22)
+key:
+  type: JSON
+  storedIn: GitHub repo secret GCP_SA_KEY
+  rotation: 90 days
+roles:
+  - role: roles/artifactregistry.writer
+    scope: project (flowitup-folio-prod)
+  - role: roles/iap.tunnelResourceAccessor
+    scope: project (flowitup-folio-prod)
+    note: required for `gcloud compute ssh --tunnel-through-iap`
+  - role: roles/compute.osLogin
+    scope: project (flowitup-folio-prod)
+    note: OS Login authorizes the SSH user; project-level enables IAP tunnel
+mustNotHave:
+  - roles/owner
+  - roles/editor
+  - any role granting GCS write on flowitup-folio-prod-backups*
