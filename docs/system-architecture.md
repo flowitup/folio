@@ -1,12 +1,14 @@
 # System Architecture
 
-**Last Updated:** 2026-01-18
-**Version:** 1.0
+**Last Updated:** 2026-05-03
+**Version:** 2.0 (Production deploy added)
+**Production:** ✅ Live at https://folio.flowitup.com — Plan [`260429-2303-gcp-single-vm-deploy`](../plans/260429-2303-gcp-single-vm-deploy/plan.md), Runbook [`deployment-guide.md`](./deployment-guide.md)
 
 ## Architecture Pattern
 
 **Primary:** Hexagonal Architecture (Ports & Adapters)
 **Supporting:** Domain-Driven Design (DDD), CQRS principles
+**Deployment:** Single-VM Docker Compose (Option A, GCP) — see "Production Deployment" section below
 
 ## Settings Page · Users & Roles Tab (FE relocation — no new BE endpoints)
 
@@ -1019,9 +1021,80 @@ export default function Page() {
 - 68 new tests (domain entities, use cases, API endpoints, components)
 - All passing
 
+## Production Deployment (added 2026-05-03)
+
+**Pattern:** Single-VM Docker Compose (Option A) — chosen over Cloud Run / GKE for cost ($80/mo) and simplicity. Tradeoff: operator owns DB recovery; revisit Option B (Cloud SQL) at first DB scare or 50+ paying users.
+
+**Topology:**
+
+```
+Cloudflare (DNS+WAF+CDN+Tunnel)
+   │ outbound TLS only
+   ▼
+GCE e2-standard-2 VM (europe-west1-b, IAP-only SSH)
+   ├── frontend     (Next.js 16 standalone, :3000)
+   ├── api          (Flask 3 + gunicorn, :5000)
+   ├── worker       (RQ, same image as api)
+   ├── db           (postgres:16-alpine)
+   ├── redis        (redis:7-alpine)
+   └── minio        (minio/minio:latest, S3 API on cdn.flowitup.com)
+   plus systemd:
+     - cloudflared          (tunnel daemon)
+     - google-cloud-ops-agent
+     - folio-render-env     (oneshot SM → /opt/folio/.env)
+   plus cron:
+     - pg-dump 03:00 UTC, minio-mirror 03:30, verify Sun 04:00
+     - weekly disk snapshot Sun 02:00 UTC
+```
+
+**Identity model (least-privilege):**
+
+| SA | Used by | Roles |
+|---|---|---|
+| `deploy-sa` | GitHub Actions (JSON key in repo secret) | AR writer, IAP tunnel, OS Login |
+| `vm-runtime-sa` | VM (attached, ADC) | AR reader, per-secret SM accessor (×20), token-creator on backup-sa, objectViewer on primary backup bucket, log/metric writer |
+| `backup-sa` | Backup scripts (impersonated by vm-runtime-sa) + `mc` (HMAC) | objectCreator + objectViewer on primary, objectCreator on archive |
+
+**Storage:**
+
+- Boot disk 30 GB pd-balanced (OS, configs)
+- Data disk 50 GB pd-balanced mounted at `/var/lib/docker` (Postgres, MinIO, Redis volumes)
+- Both attached to `folio-snapshot-weekly` resource policy (Sun 02:00 UTC, 28d retention)
+- `gs://flowitup-folio-prod-backups` (7d retention lock + versioning, append-only writes)
+- `gs://flowitup-folio-prod-backups-archive` (365d retention lock — long-term)
+
+**Secrets (24 total in `/opt/folio/.env`):** 18 from Secret Manager (rotatable) + 6 hard-coded constants (S3_ENDPOINT_URL, NODE_ENV, etc.). Rendered by oneshot systemd unit using gcloud + impersonation. Two further SM keys (CF API token + zone ID) are mirrored to GitHub Secrets only — VM never reads them.
+
+**RPO/RTO targets (honest):**
+
+- RPO: ≤24 h (last successful `pg_dump`). WAL archiving was explicitly DROPPED in Phase 7 — would have halted commits in `postgres:16-alpine` (no gsutil in image).
+- RTO: ~30-45 min for full VM rebuild from snapshots (drilled quarterly).
+
+**Anti-patterns explicitly avoided** (Red Team review applied):
+
+| Avoided | Why |
+|---|---|
+| Public SSH on VM | IAP-only; `default-allow-ssh` 0.0.0.0/0 rule deleted |
+| 0.0.0.0 port bindings | All ports `127.0.0.1` (cloudflared reaches via loopback) |
+| `:-default` env fallbacks in prod | `${VAR:?required}` enforcement |
+| vm-runtime-sa writing backups | Impersonates backup-sa via `serviceAccountTokenCreator` |
+| `mc mirror --remove` | Would propagate source corruption to backup |
+| Snap-installed gcloud | Fragile under hardened systemd (ProtectHome=true). apt build instead. |
+| Static IP + public 80/443 | Cloudflare Tunnel is outbound-only |
+| Commit-time secrets | All 20 prod secrets live in Secret Manager only |
+
+**Observability (Y3 trimmed):**
+
+- Cloud Ops Agent on VM ships logs (container stdout) + system metrics, capped 256 MB RAM
+- Cloud Logging filters documented in [`deployment-guide.md` §3.4](./deployment-guide.md)
+- 2 alert policies (email channel): uptime check on `/health` (60 s, multi-region), disk-usage > 85 %
+- Dropped: CPU/RAM/5xx/canary alerts (alert fatigue on 2-vCPU VM; add later when an incident teaches what's noisy)
+
 ## Unresolved Architectural Decisions
 
 - Session persistence strategy for multi-region deployment
 - Message queue for async tasks (Celery vs RabbitMQ)
 - Event sourcing for audit trail
 - Frontend token refresh strategy (currently relies on backend cookie renewal)
+- WAL archiving for sub-24h RPO — deferred until first DB scare; would require custom Postgres image with gsutil
+- Cloud SQL migration for managed Postgres — when ops burden of DIY recovery exceeds $30/mo savings

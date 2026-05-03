@@ -1,9 +1,10 @@
 # Codebase Summary
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-05-03
 **Total Files:** 304 (includes .git)
 **Total Tokens:** ~280,170 (Repomix)
-**Actual Source:** ~2,800 LOC (backend) + ~1,200 LOC (frontend)
+**Actual Source:** ~2,800 LOC (backend) + ~1,200 LOC (frontend) + ~3,500 LOC (infra/scripts/docs added in 2026-05 prod deploy)
+**Repos:** [`flowitup/folio`](https://github.com/flowitup/folio) (umbrella, this) · [`flowitup/folio-back-end`](https://github.com/flowitup/folio-back-end) · [`flowitup/folio-front-end`](https://github.com/flowitup/folio-front-end)
 
 ## Project Overview
 
@@ -19,6 +20,54 @@ Construction Management System with Flask backend and Next.js frontend implement
 **Auth:** JWT + Cookie-based (hybrid)
 
 ## Core Components
+
+### Repository layout (umbrella `flowitup/folio`)
+
+```
+folio/                                        # umbrella repo (this)
+├── docker-compose.yml                        # base compose (dev defaults)
+├── docker-compose.prod.yml                   # prod override (127.0.0.1, ${VAR:?required})
+├── folio-back-end/                           # git submodule → flowitup/folio-back-end
+├── folio-front-end/                          # git submodule → flowitup/folio-front-end
+├── infra/                                    # Infrastructure as Code
+│   ├── gcp/
+│   │   ├── bootstrap.sh                      # Phase 1: project, APIs, AR, buckets, SAs, IAM
+│   │   ├── provision-vm.sh                   # Phase 2: VM + data disk
+│   │   ├── firewall.sh                       # Phase 2: IAP-only, delete world-open rules
+│   │   ├── snapshot-policy.sh                # Phase 7: weekly disk snapshots
+│   │   ├── lifecycle.json                    # Phase 1: 30d noncurrent-version GCS lifecycle
+│   │   ├── cloud-init/
+│   │   │   ├── startup.sh                    # Phase 3: VM bootstrap (Docker, cloudflared, ops-agent)
+│   │   │   ├── install-ops-agent.sh          # Phase 8: Cloud Ops Agent install
+│   │   │   └── folio-render-env.service      # Phase 6: oneshot SM → /opt/folio/.env
+│   │   ├── monitoring/
+│   │   │   └── setup-monitoring.sh           # Phase 8: notification channel + uptime check + 2 alerts
+│   │   ├── scripts/
+│   │   │   └── render-env.sh                 # Phase 6: SM → /opt/folio/.env (runs on VM)
+│   │   ├── secret-manager/
+│   │   │   └── seed.sh                       # Phase 6: interactive 20-key seeder
+│   │   ├── iam-policies/                     # Phase 1: canonical SA role docs (yaml)
+│   │   └── README.md                         # Operator runbook supplement
+│   ├── ci-templates/                         # Phase 5: GitHub Actions workflow templates
+│   │   ├── deploy-api.yml
+│   │   └── deploy-frontend.yml
+│   └── cloudflare/
+│       ├── cloudflared-config.yml            # Phase 4: Tunnel ingress (folio + cdn subdomains)
+│       └── page-rules.md                     # Phase 4: operator runbook
+├── scripts/
+│   ├── backup/                               # Phase 7: VM-side backup scripts (cron-installed)
+│   │   ├── pg-dump.sh                        # daily 03:00 UTC → GCS (backup-sa impersonation)
+│   │   ├── minio-mirror.sh                   # daily 03:30 UTC, 5% drop guard, no --remove
+│   │   ├── verify-latest-dump.sh             # weekly Sun 04:00 UTC, sidecar restore-test
+│   │   └── install-backup-cron.sh            # creates /etc/cron.d/folio-backups
+│   ├── deploy/                               # Phase 5: VM-side orchestration
+│   │   ├── deploy-runner.sh                  # SHA whitelist, service whitelist
+│   │   ├── wait-healthy.sh                   # gates on Health.Status == 'healthy' (worker exception)
+│   │   └── rollback.sh                       # auto-detect via image labels
+│   └── smoke-test.sh                         # 569-line existing E2E probe (extends with --context prod)
+├── docs/                                     # Documentation (this dir)
+└── plans/                                    # Plan artifacts (deploy plan: 260429-2303-gcp-single-vm-deploy/)
+```
 
 ### Backend Structure
 
@@ -76,6 +125,27 @@ construction-back-end/
 - 🔄 Frontend login UI & form components
 - 🔄 Session timeout handling
 - 🔄 E2E auth flow testing
+
+### Production deploy (2026-04-29 → 2026-05-03)
+
+✅ **Live at https://folio.flowitup.com** — Plan: [`plans/260429-2303-gcp-single-vm-deploy/`](../plans/260429-2303-gcp-single-vm-deploy/plan.md)
+
+11-phase plan, Red-Team-reviewed (15 findings, all accepted), YAGNI-validated:
+
+- Phase 1-5: GCP project, VM, Cloudflare Tunnel, CI/CD templates
+- Phase 6: 20 secrets in SM, render-env systemd unit (apt gcloud, CLOUDSDK_CONFIG)
+- Phase 7: pg-dump + minio-mirror cron, weekly snapshots, verify-restore (RPO 24h)
+- Phase 8: Ops Agent + 2 alerts (uptime + disk >85%, Y3 trimmed from 5)
+- Phase 9: First deploy — admin@flowitup.com seeded, all 6 containers running
+- Phase 10: Restore drill — deferred to quarterly cadence
+- Phase 11: [`docs/deployment-guide.md`](./deployment-guide.md) (697-line runbook)
+
+Notable hot-fixes during Phase 9:
+- `FROM_EMAIL` env var alias (back-end reads it; render-env ships `RESEND_FROM_EMAIL`)
+- `FLASK_ENV=production` (otherwise JWT cookies miss `Secure` flag → browsers drop them)
+- `/health` cloudflared route (Flask `/health` lives at root, not `/api/v1`)
+- `roles/storage.objectViewer` on backup-sa (gsutil/gcloud-storage cp pre-flight)
+- `iamcredentials.googleapis.com` API (required for SA impersonation in pg-dump)
 
 ### Planned (Phases 10+)
 - 📋 Project CRUD endpoints & UI

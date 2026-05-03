@@ -6,8 +6,9 @@ A full-stack construction management platform with hexagonal architecture, built
 
 The Construction Management System (CMS) enables teams to manage construction projects efficiently with features for authentication, role-based access control (RBAC), project management, and team collaboration.
 
-**Status:** Core authentication & infrastructure complete (Phase 04)
-**Next Phase:** Frontend login UI + project management features
+**Status:** ✅ **Production live** at https://folio.flowitup.com (deployed 2026-05-03)
+**Deploy:** Single GCE e2-standard-2 VM in europe-west1, Cloudflare Tunnel, GCS-backed backups
+**Runbook:** [`docs/deployment-guide.md`](./deployment-guide.md)
 
 ## Tech Stack
 
@@ -28,11 +29,20 @@ The Construction Management System (CMS) enables teams to manage construction pr
 - **Testing:** Vitest + React Testing Library
 - **Design:** Fintech-minimalist aesthetic
 
-### Infrastructure
+### App-level
 - **Auth:** Flask-JWT-Extended, Argon2-cffi
 - **Rate Limiting:** Flask-Limiter (Redis-backed)
 - **Task Queue:** RQ (future: Celery)
-- **Monitoring:** (future) Prometheus + OpenTelemetry
+- **Email:** Resend (transactional, free tier)
+
+### Production infrastructure
+- **Cloud:** GCP (project `flowitup-folio-prod`, org `mtbui-creative-org`, region `europe-west1`)
+- **Compute:** Single GCE `e2-standard-2` VM running 6 Docker containers (Flask api, RQ worker, Postgres 16, Redis 7, MinIO, Next.js)
+- **Edge:** Cloudflare DNS + WAF + Tunnel (no public IP on VM, IAP-only SSH)
+- **Registry:** Artifact Registry — `europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/{api,frontend}`
+- **Secrets:** Google Secret Manager (20 keys, rendered to `/opt/folio/.env` via systemd oneshot)
+- **Backups:** Daily `pg_dump` + MinIO mirror → `gs://flowitup-folio-prod-backups`; weekly disk snapshots
+- **Monitoring:** Cloud Logging + Cloud Monitoring (uptime check + disk-usage alert), email channel
 
 ## Quick Start
 

@@ -1,6 +1,7 @@
-# Authentication Security Checklist
+# Folio Security Checklist
 
-Last Updated: 2026-01-18
+Last Updated: 2026-05-03 (production deploy applied)
+Status: ✅ Production live at https://folio.flowitup.com — see [`deployment-guide.md`](./deployment-guide.md)
 
 ## Password Security
 
@@ -17,8 +18,9 @@ Last Updated: 2026-01-18
 - [x] Short-lived access tokens (30 minutes)
 - [x] Long-lived refresh tokens (7 days)
 - [x] httpOnly cookies (no JavaScript access)
-- [x] Secure flag in production
-- [x] SameSite=Lax cookie attribute
+- [x] Secure flag in production (`FLASK_ENV=production` triggers `JWT_COOKIE_SECURE=True`)
+- [x] SameSite=Strict cookie attribute (production); SameSite=None for dev only
+- [x] CSRF protection enabled in production (`csrf_access_token` cookie + `X-CSRF-TOKEN` header)
 - [ ] Token blacklist for logout (Redis) - planned for future
 
 ## API Security
@@ -72,17 +74,60 @@ Last Updated: 2026-01-18
 - [x] Rate limiting tests
 - [x] Cookie handling tests
 
-## Deployment Checklist
+## Production Deployment Checklist (✅ applied 2026-05-03)
 
-Before deploying to production:
+- [x] JWT_SECRET cryptographically random (64 bytes hex from `openssl rand -hex 64`, stored in Secret Manager)
+- [x] HTTPS enforced (Cloudflare proxy + Tunnel — all traffic terminates TLS at CF, no public 80/443 on origin)
+- [x] Secure cookie flag enabled (`FLASK_ENV=production` triggers `JWT_COOKIE_SECURE=True`)
+- [x] CORS allowed origins set to `https://folio.flowitup.com` only (via SM key `folio-cors-origins`)
+- [x] Rate limiting enabled (Flask-Limiter, Redis-backed, per-user via JWT subject)
+- [x] Monitoring set up (Cloud Monitoring uptime check + disk-usage alert, email channel `mt.bui.fr@gmail.com`)
+- [x] Database connection on private Docker network only (no host-published port)
 
-- [ ] Verify JWT_SECRET is cryptographically random (32+ bytes)
-- [ ] Ensure HTTPS is enforced
-- [ ] Confirm Secure cookie flag is enabled
-- [ ] Review CORS allowed origins
-- [ ] Enable rate limiting in production config
-- [ ] Set up monitoring/alerting for auth failures
-- [ ] Review database connection security
+## Production Infrastructure Hardening
+
+### Network
+- [x] No public IP on VM (Cloudflare Tunnel outbound-only)
+- [x] No public 80/443 listener on origin
+- [x] SSH only via IAP TCP forwarding (no 0.0.0.0/0 SSH rule; default-allow-ssh deleted)
+- [x] All container ports bound to `127.0.0.1` (cloudflared reaches via loopback)
+- [x] Cloudflare WAF + DDoS in front of every request
+
+### Secrets
+- [x] 20 secrets in Google Secret Manager (label `env=prod`)
+- [x] Per-secret IAM bindings (no project-level `secretAccessor`)
+- [x] `/opt/folio/.env` rendered by systemd oneshot, mode 640 root:docker
+- [x] No secrets in repo (`.env`, `*.env.*` blocked by parent + submodule `.gitignore`)
+- [x] Compose enforces `${VAR:?required}` — fails fast on missing env, no silent dev defaults
+
+### Identity (least-privilege)
+- [x] 3 service accounts, distinct purposes (deploy / runtime / backup)
+- [x] `vm-runtime-sa` cannot write backups (impersonates `backup-sa` via `serviceAccountTokenCreator`)
+- [x] `backup-sa` cannot delete or modify objects (objectCreator + objectViewer; bucket retention lock prevents true delete)
+- [x] `deploy-sa` JSON key in GitHub Secrets only — never on the VM
+- [x] HMAC keys (1 pair, for `mc` mirror) in Secret Manager, rotation runbook documented
+
+### Backups & recovery
+- [x] Daily logical pg_dump → GCS (verified 2026-05-03, 38KB landed)
+- [x] Daily MinIO mirror with 5% drop guard (no `--remove` flag — Red Team finding 5)
+- [x] Weekly disk snapshots (boot + data, 28d retention)
+- [x] Bucket retention lock (7d primary, 365d archive)
+- [x] Bucket versioning ON
+- [x] Weekly automated restore-test (sidecar Postgres container)
+- [x] Quarterly tabletop restore drill scheduled (runbook §5.5)
+
+### Front-end / browser
+- [x] httpOnly cookies for tokens (no JS access)
+- [x] CSRF token in separate cookie (JS-readable, sent via header)
+- [x] No localStorage tokens
+- [x] No public env vars containing secrets (only `NEXT_PUBLIC_API_BASE_URL`)
+- [x] Browser-side bot detection respected (no CAPTCHA bypass attempts)
+
+### Observability
+- [x] Cloud Logging captures all container stdout
+- [x] Uptime check pages within 60-300s of /health failure
+- [x] Disk-usage alert at 85%
+- [x] No PII in logs (api logs requests but not bodies)
 
 ## Future Improvements
 

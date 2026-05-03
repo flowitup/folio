@@ -13,12 +13,30 @@
 ## Roadmap Overview
 
 ```
-Phase 01-04: Foundation (COMPLETED) ████████████████░░░░░
-Phase 05-07: MVP Features (IN PROGRESS) ████░░░░░░░░░░░░░░░░
-Phase 08: Domain Modules (COMPLETED) ████████████████░░░░░
-Phase 09-10: Production Ready (PLANNED) ░░░░░░░░░░░░░░░░░░░░
-Phase 11-12: Advanced Features (FUTURE) ░░░░░░░░░░░░░░░░░░░░
+Phase 01-04: Foundation                  (COMPLETED) ████████████████████ 100%
+Phase 05-07: MVP Features                (IN PROGRESS) ██████████░░░░░░░░░░  50%
+Phase 08:    Domain Modules              (COMPLETED) ████████████████████ 100%
+Phase 09:    Production Deploy (GCP)     (COMPLETED) ████████████████████ 100%  ← 2026-05-03
+Phase 10-11: Advanced Features           (FUTURE)    ░░░░░░░░░░░░░░░░░░░░   0%
 ```
+
+## Production Deploy (separate roadmap)
+
+Tracked in [`plans/260429-2303-gcp-single-vm-deploy/plan.md`](../plans/260429-2303-gcp-single-vm-deploy/plan.md):
+
+| Sub-phase | What | Status |
+|---|---|---|
+| 1 | GCP project, APIs, AR, GCS, SAs, IAM | ✅ 2026-04-30 |
+| 2 | VM provisioning + IAP-only firewall | ✅ 2026-04-30 |
+| 3 | VM bootstrap (Docker, cloudflared, hardening) | ✅ 2026-04-30 |
+| 4 | Cloudflare DNS + Tunnel + page rules | ✅ 2026-04-30 |
+| 5 | CI/CD workflow templates | ✅ 2026-04-30 (operator wiring deferred) |
+| 6 | Secret Manager (20 keys) + render-env unit | ✅ 2026-05-03 |
+| 7 | Backup scripts + cron + snapshot policy | ✅ 2026-05-03 (pg-dump verified) |
+| 8 | Ops Agent + uptime + 2 alerts | ✅ 2026-05-03 |
+| 9 | First production deploy | ✅ 2026-05-03 (admin login working) |
+| 10 | Restore drill | ⏰ Quarterly cadence (next: Q+1) |
+| 11 | Runbook (`docs/deployment-guide.md`) | ✅ 2026-05-03 (697 lines) |
 
 ## Phase 01: Project Setup & Infrastructure
 
