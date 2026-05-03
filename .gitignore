@@ -7,5 +7,24 @@
 # macOS noise
 .DS_Store
 
-# Local Claude Code worktrees + scratch
-.claude/worktrees/
+# Claude Code / agent artifacts
+.claude/
+plans/
+
+# Agent-generated feature artifacts
+.feature-screenshots/
+FEATURES.md
+
+# Agent scratch and generated docs (keep only human-authored core docs)
+docs/CLAUDE.md
+docs/ai/
+docs/checklist/
+docs/guide/
+docs/plans/
+docs/journals/
+docs/state/
+docs/tmp/
+docs/codebase-summary.md
+docs/design-guidelines.md
+docs/project-roadmap.md
+docs/security-checklist.md
