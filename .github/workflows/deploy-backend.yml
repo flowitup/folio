@@ -88,15 +88,30 @@ jobs:
           fetch-tags: true
 
       - name: Verify version↔sha tag (workflow_dispatch only)
+        # actions/checkout@v4 with ref=<sha> doesn't reliably populate local
+        # tags (known limitation), so we resolve via `git ls-remote` against
+        # the submodule URL using the same SUBMODULE_TOKEN. Annotated tags
+        # need ^{} to dereference to the commit SHA.
         if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_AUTH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          cd src-be
-          if git tag --points-at HEAD | grep -qx "v${{ steps.input.outputs.version }}"; then
-            echo "::notice::tag v${{ steps.input.outputs.version }} points at ${{ steps.input.outputs.sha }} ✓"
+          VERSION="${{ steps.input.outputs.version }}"
+          SHA="${{ steps.input.outputs.sha }}"
+          remote_url="https://x-access-token:${GH_AUTH_TOKEN}@github.com/${{ env.SUBMODULE_REPO }}.git"
+          tag_sha=$(git ls-remote "$remote_url" "refs/tags/v${VERSION}^{}" | awk '{print $1}')
+          if [ -z "$tag_sha" ]; then
+            tag_sha=$(git ls-remote "$remote_url" "refs/tags/v${VERSION}" | awk '{print $1}')
+          fi
+          if [ -z "$tag_sha" ]; then
+            echo "::error::tag v${VERSION} does not exist on origin"
+            exit 1
+          fi
+          if [ "$tag_sha" = "$SHA" ] || [[ "$SHA" == "$tag_sha"* ]] || [[ "$tag_sha" == "$SHA"* ]]; then
+            echo "::notice::tag v${VERSION} points at ${SHA} ✓ (resolved $tag_sha)"
           else
-            echo "::error::sha ${{ steps.input.outputs.sha }} does not carry tag v${{ steps.input.outputs.version }}"
-            echo "::error::tags at this SHA: $(git tag --points-at HEAD | tr '\n' ' ')"
+            echo "::error::tag v${VERSION} points at ${tag_sha} but workflow_dispatch was given ${SHA}"
             exit 1
           fi
 
