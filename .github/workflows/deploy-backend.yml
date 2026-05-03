@@ -1,0 +1,180 @@
+# Deploy backend (api + worker share image) to prod VM.
+#
+# Triggered by:
+#   - repository_dispatch (event_type: deploy-api) from folio-back-end's
+#     release job after it tags a new version.
+#   - workflow_dispatch with explicit version + sha (manual fallback).
+#
+# Flow: checkout submodule@<sha> → buildx → push to AR (tag <sha> + latest)
+#   → gcloud IAP SSH → /opt/folio/scripts/deploy-runner.sh <sha> api
+#   → smoke /health → commit submodule pointer bump on master.
+#
+# Plan: plans/260503-0913-parent-auto-deploy-on-version-bump/phase-01-...md
+# Runbook: docs/deployment-guide.md §3.1, §4.1
+
+name: Deploy Backend
+
+on:
+  repository_dispatch:
+    types: [deploy-api]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Backend version (e.g. 1.2.3)"
+        required: true
+        type: string
+      sha:
+        description: "folio-back-end commit SHA (7-40 hex)"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-prod-backend
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # commit submodule pointer bump back to parent master
+
+env:
+  PROJECT_ID: flowitup-folio-prod
+  REGION: europe-west1
+  AR_REPO: folio
+  IMAGE_NAME: api
+  VM_NAME: flowitup-folio-prod-1
+  ZONE: europe-west1-b
+  PROD_DOMAIN: folio.flowitup.com
+  SUBMODULE_REPO: flowitup/folio-back-end
+  SUBMODULE_PATH: folio-back-end
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Resolve inputs (dispatch vs manual)
+        id: input
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            VERSION="${{ github.event.client_payload.version }}"
+            SHA="${{ github.event.client_payload.sha }}"
+          else
+            VERSION="${{ inputs.version }}"
+            SHA="${{ inputs.sha }}"
+          fi
+          [[ "$SHA" =~ ^[0-9a-f]{7,40}$ ]] || { echo "::error::invalid sha '$SHA'"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid version '$VERSION'"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "::notice::deploying api v$VERSION (sha $SHA)"
+
+      - name: Checkout parent (for pointer commit)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Checkout folio-back-end at SHA
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SUBMODULE_REPO }}
+          ref: ${{ steps.input.outputs.sha }}
+          path: src-be
+          persist-credentials: false
+          # If GITHUB_TOKEN can't reach private sibling, swap to SUBMODULE_TOKEN.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build + push api image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src-be
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.revision=${{ steps.input.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.input.outputs.version }}
+            org.opencontainers.image.source=https://github.com/${{ env.SUBMODULE_REPO }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy on VM (deploy-runner.sh)
+        # --quiet suppresses the first-run SSH-key generation prompt (would hang).
+        # deploy-runner.sh handles: pull image → flask db upgrade → swap api+worker
+        # with --no-deps → wait-healthy.
+        run: |
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --tunnel-through-iap \
+            --zone=${{ env.ZONE }} \
+            --quiet \
+            --command="/opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} api"
+
+      - name: Smoke /health
+        run: |
+          set -e
+          for i in 1 2 3 4 5; do
+            code=$(curl -fsS -o /tmp/healthz.json -w '%{http_code}' --max-time 10 \
+              "https://${{ env.PROD_DOMAIN }}/health" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "::notice::smoke ok (200) — $(cat /tmp/healthz.json)"
+              exit 0
+            fi
+            echo "smoke try $i/5: code=$code"
+            sleep 5
+          done
+          echo "::error::smoke failed — /health did not return 200 after 5 tries"
+          exit 1
+
+      - name: Bump folio-back-end pointer in parent master
+        run: |
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Submodules aren't initialised on a fresh runner — init shallowly,
+          # then point at the deployed SHA.
+          git submodule update --init -- ${{ env.SUBMODULE_PATH }} || true
+          cd ${{ env.SUBMODULE_PATH }}
+          git fetch --depth=1 origin ${{ steps.input.outputs.sha }}
+          git checkout ${{ steps.input.outputs.sha }}
+          cd -
+          git add ${{ env.SUBMODULE_PATH }}
+          if git diff --cached --quiet; then
+            echo "submodule pointer already at ${{ steps.input.outputs.sha }} — nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(deploy): folio-back-end → ${{ steps.input.outputs.sha }} (v${{ steps.input.outputs.version }}) [skip ci]"
+          git pull --rebase origin master || true
+          git push origin HEAD:master
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::API deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
+          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy Backend"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Version | v${{ steps.input.outputs.version }} |"
+            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
+            echo "| Trigger | ${{ github.event_name }} |"
+            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
