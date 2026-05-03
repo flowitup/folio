@@ -82,7 +82,12 @@ Full incident playbook: `docs/deployment-guide.md` §4.
 Parent repo `flowitup/folio` (one-time setup —
 `plans/260503-0913-parent-auto-deploy-on-version-bump/phase-06-secrets-setup-runbook.md`):
 
-- `GCP_SA_KEY` — `deploy-sa` JSON key.
+- `GCP_WIF_PROVIDER` — Workload Identity Federation provider resource path,
+  e.g. `projects/<num>/locations/global/workloadIdentityPools/github-actions/providers/github`.
+- `GCP_SA_EMAIL` — service account the WIF binding impersonates,
+  `deploy-sa@flowitup-folio-prod.iam.gserviceaccount.com`. Org policy
+  `iam.disableServiceAccountKeyCreation` blocks JSON keys, so we use OIDC
+  via WIF — no `GCP_SA_KEY` needed, no key rotation.
 - `CF_API_TOKEN` — Cloudflare token, zone-scoped, `Cache Purge:Edit` only.
 - `CF_ZONE_ID` — `flowitup.com` zone ID.
 - `SUBMODULE_TOKEN` — fine-grained PAT, scoped to `flowitup/folio-back-end`
