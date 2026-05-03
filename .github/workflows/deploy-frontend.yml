@@ -1,0 +1,234 @@
+# Deploy frontend (Next.js standalone) to prod VM.
+#
+# Triggered by:
+#   - repository_dispatch (event_type: deploy-frontend) from folio-front-end's
+#     release job after it tags a new version.
+#   - workflow_dispatch with explicit version + sha (manual fallback).
+#
+# Flow: checkout submodule@<sha> → buildx with NEXT_PUBLIC_API_BASE_URL baked
+#   → push to AR (tag <sha> + latest) → gcloud IAP SSH →
+#   /opt/folio/scripts/deploy-runner.sh <sha> frontend → CF cache purge →
+#   smoke / (follows next-intl locale redirect) → submodule pointer bump.
+#
+# Note: NEXT_PUBLIC_* envs are baked into the JS bundle at build time. If the
+# prod domain ever changes, all FE images need rebuilding.
+#
+# Plan: plans/260503-0913-parent-auto-deploy-on-version-bump/phase-02-...md
+# Runbook: docs/deployment-guide.md §3.1, §4.1
+
+name: Deploy Frontend
+
+on:
+  repository_dispatch:
+    types: [deploy-frontend]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Frontend version (e.g. 1.2.3)"
+        required: true
+        type: string
+      sha:
+        description: "folio-front-end commit SHA (7-40 hex)"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-prod-frontend
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # commit submodule pointer bump back to parent master
+
+env:
+  PROJECT_ID: flowitup-folio-prod
+  REGION: europe-west1
+  AR_REPO: folio
+  IMAGE_NAME: frontend
+  VM_NAME: flowitup-folio-prod-1
+  ZONE: europe-west1-b
+  PROD_DOMAIN: folio.flowitup.com
+  SUBMODULE_REPO: flowitup/folio-front-end
+  SUBMODULE_PATH: folio-front-end
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Resolve inputs (dispatch vs manual)
+        id: input
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            VERSION="${{ github.event.client_payload.version }}"
+            SHA="${{ github.event.client_payload.sha }}"
+          else
+            VERSION="${{ inputs.version }}"
+            SHA="${{ inputs.sha }}"
+          fi
+          [[ "$SHA" =~ ^[0-9a-f]{7,40}$ ]] || { echo "::error::invalid sha '$SHA'"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid version '$VERSION'"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "::notice::deploying frontend v$VERSION (sha $SHA)"
+
+      - name: Checkout parent (for pointer commit)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Checkout folio-front-end at SHA
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SUBMODULE_REPO }}
+          ref: ${{ steps.input.outputs.sha }}
+          path: src-fe
+          persist-credentials: false
+          # SUBMODULE_TOKEN is REQUIRED when the sibling repo is private —
+          # GITHUB_TOKEN cannot read other private repos in the org.
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-tags: true
+
+      - name: Verify version↔sha tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -e
+          cd src-fe
+          if git tag --points-at HEAD | grep -qx "v${{ steps.input.outputs.version }}"; then
+            echo "::notice::tag v${{ steps.input.outputs.version }} points at ${{ steps.input.outputs.sha }} ✓"
+          else
+            echo "::error::sha ${{ steps.input.outputs.sha }} does not carry tag v${{ steps.input.outputs.version }}"
+            echo "::error::tags at this SHA: $(git tag --points-at HEAD | tr '\n' ' ')"
+            exit 1
+          fi
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build + push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src-fe
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=https://${{ env.PROD_DOMAIN }}/api/v1
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.revision=${{ steps.input.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.input.outputs.version }}
+            org.opencontainers.image.source=https://github.com/${{ env.SUBMODULE_REPO }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Deploy on VM (deploy-runner.sh)
+        run: |
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --tunnel-through-iap \
+            --zone=${{ env.ZONE }} \
+            --quiet \
+            --command="/opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} frontend"
+
+      - name: Purge Cloudflare edge cache
+        # Required: /_next/static/* has 1-month edge TTL. Without purge, users
+        # request stale chunk hashes and see white-screen 404s.
+        run: |
+          response=$(curl -fSs -X POST \
+            -H "Authorization: Bearer ${{ secrets.CF_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"hosts":["${{ env.PROD_DOMAIN }}"]}' \
+            "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/purge_cache")
+          echo "$response"
+          echo "$response" | grep -q '"success":true' || { echo "::error::CF purge failed"; exit 1; }
+
+      - name: Wait 30s for CF edge propagation
+        # CF purge_cache is sync at the API level but POP-to-POP propagation
+        # takes ~30s. Smoking sooner can hit a still-cached old response.
+        run: sleep 30
+
+      - name: Smoke / (assert 200 + Next.js marker)
+        # `-L` follows the next-intl locale redirect (/ → /en or /fr).
+        # Cache-bust + Next.js `_next/static` marker grep defeats CF custom
+        # error pages and stale-cache false positives.
+        run: |
+          set -e
+          for i in 1 2 3 4 5; do
+            code=$(curl -fsSL -o /tmp/page.html -w '%{http_code}' --max-time 15 \
+              -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' \
+              "https://${{ env.PROD_DOMAIN }}/?_=$(date +%s)" || echo "000")
+            if [ "$code" = "200" ] && grep -q '_next/static' /tmp/page.html; then
+              echo "::notice::smoke ok (200, Next.js marker present)"
+              exit 0
+            fi
+            echo "smoke try $i/5: code=$code marker=$(grep -c '_next/static' /tmp/page.html 2>/dev/null || echo 0)"
+            sleep 5
+          done
+          echo "::error::smoke failed — / did not return 200 with Next.js marker after 5 tries"
+          exit 1
+
+      - name: Bump folio-front-end pointer in parent master
+        # Writes the gitlink directly via update-index (no second clone needed,
+        # so no cross-repo auth dance for the submodule remote). On race with
+        # a human master push, retry fetch+rebase+push up to 3x with backoff.
+        run: |
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git update-index --add --cacheinfo 160000,${{ steps.input.outputs.sha }},${{ env.SUBMODULE_PATH }}
+          if git diff --cached --quiet; then
+            echo "submodule pointer already at ${{ steps.input.outputs.sha }} — nothing to commit"
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            commit_msg="chore(deploy): folio-front-end → ${{ steps.input.outputs.sha }} [manual] [skip ci]"
+          else
+            commit_msg="chore(deploy): folio-front-end → ${{ steps.input.outputs.sha }} (v${{ steps.input.outputs.version }}) [skip ci]"
+          fi
+          git commit -m "$commit_msg"
+          for i in 1 2 3; do
+            git fetch origin master
+            if ! git rebase origin/master; then
+              git rebase --abort
+              echo "::error::pointer-bump rebase failed onto origin/master"
+              exit 1
+            fi
+            if git push origin HEAD:master; then
+              echo "::notice::pointer commit pushed (try $i/3)"
+              exit 0
+            fi
+            echo "push race on master, retrying ($i/3)"
+            sleep $((i * 5))
+          done
+          echo "::error::failed to push pointer commit after 3 retries — deploy is live, parent master is stale"
+          exit 1
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Frontend deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
+          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy Frontend"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Version | v${{ steps.input.outputs.version }} |"
+            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
+            echo "| Trigger | ${{ github.event_name }} |"
+            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

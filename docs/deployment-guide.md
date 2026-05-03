@@ -249,12 +249,39 @@ sudo IMAGE_TAG=latest docker compose -f docker-compose.yml -f docker-compose.pro
 curl -sI https://folio.flowitup.com/health | head -1   # expect HTTP/2 200
 ```
 
-**Path B — CI-driven (after GitHub remote is wired):** `git push origin main`
-on the back-end or front-end submodule triggers GitHub Actions
-(`.github/workflows/deploy-{api,frontend}.yml`, templates in
-`infra/ci-templates/`). CI builds + pushes, then SSHes via IAP and runs the
-pull + restart sequence. Templates also call CF cache-purge after frontend
-deploys.
+**Path B — automated CI/CD (current default):**
+
+A submodule merge to `master` triggers:
+
+1. Submodule CI bumps version, runs lint+test, creates tag + GitHub Release.
+2. Submodule release job sends `repository_dispatch` to `flowitup/folio`
+   (event_type `deploy-api` or `deploy-frontend`, payload `{ version, sha,
+   ref, run_url }`).
+3. Parent workflow `.github/workflows/deploy-{backend,frontend}.yml` runs:
+   checkout submodule@SHA → buildx → push to AR (tagged SHA + latest) →
+   `gcloud compute ssh --tunnel-through-iap` →
+   `/opt/folio/scripts/deploy-runner.sh <sha> <api|frontend>` → smoke
+   `/health` (BE) or `/` (FE) → commit submodule pointer bump on parent
+   master.
+
+Concurrency-grouped per service (`deploy-prod-backend` /
+`deploy-prod-frontend`) so two close pushes serialize.
+
+Manual deploy without a tag (e.g. PAT expired, redeploy a SHA):
+
+```bash
+gh workflow run deploy-backend.yml  -R flowitup/folio -f version=<v> -f sha=<sha>
+gh workflow run deploy-frontend.yml -R flowitup/folio -f version=<v> -f sha=<sha>
+```
+
+The parent workflow does NOT run migrations — `deploy-runner.sh` on the VM
+does that for the API. The parent workflow DOES purge the Cloudflare edge
+cache after a frontend deploy (required so users don't 404 against new
+chunk hashes).
+
+The legacy submodule-side templates have moved to
+`infra/ci-templates/legacy/`; do not copy them into a submodule (would
+double-deploy).
 
 ### 3.2 Rollback
 
