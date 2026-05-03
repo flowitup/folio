@@ -38,6 +38,7 @@ concurrency:
 
 permissions:
   contents: write   # commit submodule pointer bump back to parent master
+  id-token: write   # required for Workload Identity Federation OIDC token
 
 env:
   PROJECT_ID: flowitup-folio-prod
@@ -105,7 +106,10 @@ jobs:
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          # Workload Identity Federation — keyless auth via GitHub OIDC token.
+          # Org policy `iam.disableServiceAccountKeyCreation` blocks JSON keys.
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
