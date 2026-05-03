@@ -403,7 +403,39 @@ sudo IMAGE_TAG=latest docker compose -f docker-compose.yml -f docker-compose.pro
 '
 ```
 
-### 3.6 Scale VM up
+### 3.6 Bump submodules to latest master
+
+The umbrella repo `flowitup/folio` references `folio-back-end` and
+`folio-front-end` as **git submodules tracking the `master` branch** (see
+`.gitmodules`). The parent always records a specific SHA — that's git's
+reproducibility guarantee. To pick up new commits from each submodule's
+`master`:
+
+```bash
+cd ~/workspaces/folio
+
+# 1. Fetch + advance both submodules to their current master tip
+git submodule update --remote --merge
+
+# 2. See what changed
+git submodule status              # shows new SHAs
+git diff --submodule              # shows commits since last bump
+
+# 3. Commit the bump on the umbrella repo
+git add folio-back-end folio-front-end
+git commit -m "chore: bump submodules — <one-line description of what's new>"
+git push
+
+# 4. Build + push images at the new SHAs (per §3.1)
+# 5. Pull + restart on the VM (per §3.1)
+```
+
+**Caveat — submodule SHA != deployed image:** the umbrella repo records the
+submodule SHA, but the deployed Docker image is built FROM that SHA. The
+`build + push` step (§3.1) is what actually changes what runs in production.
+A submodule bump without rebuilding the image is a no-op for the VM.
+
+### 3.7 Scale VM up
 
 `e2-standard-2` (2 vCPU / 8 GB) → `e2-standard-4` (4 vCPU / 16 GB):
 
