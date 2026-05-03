@@ -91,23 +91,21 @@ jobs:
           fetch-tags: true
 
       - name: Verify version↔sha tag (workflow_dispatch only)
-        # actions/checkout@v4 with ref=<sha> doesn't reliably populate local
-        # tags (known limitation), so we resolve via `git ls-remote` against
-        # the submodule URL. Annotated tags need ^{} to dereference to commit.
+        # Use the GitHub REST API (via gh) to resolve the tag — avoids the
+        # actions/checkout@v4 ref=<sha> tag-fetch quirk and works with
+        # fine-grained PATs (where git-over-HTTPS auth is finicky).
+        # `repos/.../commits/<ref>` accepts tag names and resolves through
+        # annotated tags to the underlying commit in one call.
         if: github.event_name == 'workflow_dispatch'
         env:
-          GH_AUTH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -e
           VERSION="${{ steps.input.outputs.version }}"
           SHA="${{ steps.input.outputs.sha }}"
-          remote_url="https://x-access-token:${GH_AUTH_TOKEN}@github.com/${{ env.SUBMODULE_REPO }}.git"
-          tag_sha=$(git ls-remote "$remote_url" "refs/tags/v${VERSION}^{}" | awk '{print $1}')
+          tag_sha=$(gh api "repos/${{ env.SUBMODULE_REPO }}/commits/v${VERSION}" --jq .sha 2>/dev/null || true)
           if [ -z "$tag_sha" ]; then
-            tag_sha=$(git ls-remote "$remote_url" "refs/tags/v${VERSION}" | awk '{print $1}')
-          fi
-          if [ -z "$tag_sha" ]; then
-            echo "::error::tag v${VERSION} does not exist on origin"
+            echo "::error::tag v${VERSION} does not exist on ${{ env.SUBMODULE_REPO }}"
             exit 1
           fi
           if [ "$tag_sha" = "$SHA" ] || [[ "$SHA" == "$tag_sha"* ]] || [[ "$tag_sha" == "$SHA"* ]]; then
