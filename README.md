@@ -82,17 +82,20 @@ Full incident playbook: `docs/deployment-guide.md` §4.
 Parent repo `flowitup/folio` (one-time setup —
 `plans/260503-0913-parent-auto-deploy-on-version-bump/phase-06-secrets-setup-runbook.md`):
 
-- `GCP_SA_KEY` — `deploy-sa` JSON key
-- `CF_API_TOKEN` — Cloudflare token, zone-scoped, `Cache Purge:Edit` only
-- `CF_ZONE_ID` — `flowitup.com` zone ID
-- `SUBMODULE_TOKEN` — fallback PAT only if `GITHUB_TOKEN` cannot read
-  sibling private repos in the org
+- `GCP_SA_KEY` — `deploy-sa` JSON key.
+- `CF_API_TOKEN` — Cloudflare token, zone-scoped, `Cache Purge:Edit` only.
+- `CF_ZONE_ID` — `flowitup.com` zone ID.
+- `SUBMODULE_TOKEN` — fine-grained PAT, scoped to `flowitup/folio-back-end`
+  + `flowitup/folio-front-end` with `Contents:read` + `Metadata:read`.
+  REQUIRED — both submodules are private and `GITHUB_TOKEN` on parent
+  cannot read other private repos in the org.
 
 Each submodule (`folio-back-end`, `folio-front-end`):
 
 - `PARENT_DISPATCH_TOKEN` — fine-grained PAT scoped to `flowitup/folio`
-  with `Contents:read` + `Metadata:read` + `Actions:write`. Used to
-  send `repository_dispatch` after release.
+  with `Contents: Read and write` + `Metadata: Read-only` (the
+  `repository_dispatch` API requires `Contents: write` for fine-grained
+  PATs). Used to send `repository_dispatch` after release.
 
 ### Concurrency + safety
 

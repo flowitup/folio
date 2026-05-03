@@ -80,8 +80,24 @@ jobs:
           ref: ${{ steps.input.outputs.sha }}
           path: src-be
           persist-credentials: false
-          # If GITHUB_TOKEN can't reach private sibling, swap to SUBMODULE_TOKEN.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # SUBMODULE_TOKEN is REQUIRED when the sibling repo is private —
+          # GITHUB_TOKEN cannot read other private repos in the org.
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
+          # Fetch tags so the version<->sha verify step can check tag points-at.
+          fetch-tags: true
+
+      - name: Verify version↔sha tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -e
+          cd src-be
+          if git tag --points-at HEAD | grep -qx "v${{ steps.input.outputs.version }}"; then
+            echo "::notice::tag v${{ steps.input.outputs.version }} points at ${{ steps.input.outputs.sha }} ✓"
+          else
+            echo "::error::sha ${{ steps.input.outputs.sha }} does not carry tag v${{ steps.input.outputs.version }}"
+            echo "::error::tags at this SHA: $(git tag --points-at HEAD | tr '\n' ' ')"
+            exit 1
+          fi
 
       - id: auth
         uses: google-github-actions/auth@v2
@@ -108,8 +124,8 @@ jobs:
             org.opencontainers.image.revision=${{ steps.input.outputs.sha }}
             org.opencontainers.image.version=${{ steps.input.outputs.version }}
             org.opencontainers.image.source=https://github.com/${{ env.SUBMODULE_REPO }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
       - name: Deploy on VM (deploy-runner.sh)
         # --quiet suppresses the first-run SSH-key generation prompt (would hang).
@@ -122,42 +138,61 @@ jobs:
             --quiet \
             --command="/opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} api"
 
-      - name: Smoke /health
+      - name: Smoke /health (assert 200 + JSON shape)
+        # Cache-bust via ?_=<epoch> to defeat any accidental CF page rule.
+        # JSON-shape check defends against CF custom error pages that 200 with HTML.
         run: |
           set -e
           for i in 1 2 3 4 5; do
             code=$(curl -fsS -o /tmp/healthz.json -w '%{http_code}' --max-time 10 \
-              "https://${{ env.PROD_DOMAIN }}/health" || echo "000")
-            if [ "$code" = "200" ]; then
-              echo "::notice::smoke ok (200) — $(cat /tmp/healthz.json)"
+              -H 'Cache-Control: no-cache' -H 'Pragma: no-cache' \
+              "https://${{ env.PROD_DOMAIN }}/health?_=$(date +%s)" || echo "000")
+            if [ "$code" = "200" ] && \
+               jq -e '(.status == "ok") or (.ok == true) or (.healthy == true)' /tmp/healthz.json >/dev/null 2>&1; then
+              echo "::notice::smoke ok (200, JSON ok) — $(cat /tmp/healthz.json)"
               exit 0
             fi
-            echo "smoke try $i/5: code=$code"
+            echo "smoke try $i/5: code=$code body=$(head -c 200 /tmp/healthz.json 2>/dev/null || echo none)"
             sleep 5
           done
-          echo "::error::smoke failed — /health did not return 200 after 5 tries"
+          echo "::error::smoke failed — /health did not return 200 with healthy JSON after 5 tries"
           exit 1
 
       - name: Bump folio-back-end pointer in parent master
+        # Writes the gitlink directly via update-index (no second clone needed,
+        # so no cross-repo auth dance for the submodule remote). On race with
+        # a human master push, retry fetch+rebase+push up to 3x with backoff.
         run: |
           set -e
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Submodules aren't initialised on a fresh runner — init shallowly,
-          # then point at the deployed SHA.
-          git submodule update --init -- ${{ env.SUBMODULE_PATH }} || true
-          cd ${{ env.SUBMODULE_PATH }}
-          git fetch --depth=1 origin ${{ steps.input.outputs.sha }}
-          git checkout ${{ steps.input.outputs.sha }}
-          cd -
-          git add ${{ env.SUBMODULE_PATH }}
+          git update-index --add --cacheinfo 160000,${{ steps.input.outputs.sha }},${{ env.SUBMODULE_PATH }}
           if git diff --cached --quiet; then
             echo "submodule pointer already at ${{ steps.input.outputs.sha }} — nothing to commit"
             exit 0
           fi
-          git commit -m "chore(deploy): folio-back-end → ${{ steps.input.outputs.sha }} (v${{ steps.input.outputs.version }}) [skip ci]"
-          git pull --rebase origin master || true
-          git push origin HEAD:master
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            commit_msg="chore(deploy): folio-back-end → ${{ steps.input.outputs.sha }} [manual] [skip ci]"
+          else
+            commit_msg="chore(deploy): folio-back-end → ${{ steps.input.outputs.sha }} (v${{ steps.input.outputs.version }}) [skip ci]"
+          fi
+          git commit -m "$commit_msg"
+          for i in 1 2 3; do
+            git fetch origin master
+            if ! git rebase origin/master; then
+              git rebase --abort
+              echo "::error::pointer-bump rebase failed onto origin/master"
+              exit 1
+            fi
+            if git push origin HEAD:master; then
+              echo "::notice::pointer commit pushed (try $i/3)"
+              exit 0
+            fi
+            echo "push race on master, retrying ($i/3)"
+            sleep $((i * 5))
+          done
+          echo "::error::failed to push pointer commit after 3 retries — deploy is live, parent master is stale"
+          exit 1
 
       - name: Notify on failure
         if: failure()
