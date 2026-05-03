@@ -175,6 +175,80 @@ FLASK_DEBUG=false
 NODE_ENV=production
 ```
 
+### Console quick links
+
+Bookmark these — every common diagnostic is one click away:
+
+| What | URL |
+|---|---|
+| **Project home** | https://console.cloud.google.com/home/dashboard?project=flowitup-folio-prod |
+| **VM instance** | https://console.cloud.google.com/compute/instancesDetail/zones/europe-west1-b/instances/flowitup-folio-prod-1?project=flowitup-folio-prod |
+| **Artifact Registry — Docker images** | https://console.cloud.google.com/artifacts/docker/flowitup-folio-prod/europe-west1/folio?project=flowitup-folio-prod |
+| **Secret Manager** | https://console.cloud.google.com/security/secret-manager?project=flowitup-folio-prod |
+| **Cloud Storage — backups** | https://console.cloud.google.com/storage/browser/flowitup-folio-prod-backups?project=flowitup-folio-prod |
+| **Cloud Storage — archive** | https://console.cloud.google.com/storage/browser/flowitup-folio-prod-backups-archive?project=flowitup-folio-prod |
+| **Cloud Logging** | https://console.cloud.google.com/logs/query?project=flowitup-folio-prod |
+| **Cloud Monitoring — uptime** | https://console.cloud.google.com/monitoring/uptime?project=flowitup-folio-prod |
+| **Cloud Monitoring — alerts** | https://console.cloud.google.com/monitoring/alerting/policies?project=flowitup-folio-prod |
+| **IAM — service accounts** | https://console.cloud.google.com/iam-admin/serviceaccounts?project=flowitup-folio-prod |
+| **Snapshots** | https://console.cloud.google.com/compute/snapshots?project=flowitup-folio-prod |
+| **GCS HMAC keys (Interoperability)** | https://console.cloud.google.com/storage/settings;tab=interoperability?project=flowitup-folio-prod |
+| **Billing dashboard** | https://console.cloud.google.com/billing?project=flowitup-folio-prod |
+| **Cloudflare dashboard** | https://dash.cloudflare.com/?account=flowitup&zone=flowitup.com |
+| **Resend dashboard** | https://resend.com/emails |
+
+### Docker registry — Artifact Registry coordinates
+
+```
+Host:     europe-west1-docker.pkg.dev
+Project:  flowitup-folio-prod
+Repo:     folio  (Docker format)
+
+Images:
+  europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/api
+  europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/frontend
+
+Tags currently in use:
+  api:<git-sha>  + :latest
+  frontend:<git-sha>  + :latest
+```
+
+**One-time auth** for any new dev machine:
+
+```bash
+gcloud auth configure-docker europe-west1-docker.pkg.dev
+```
+
+**List + manage images:**
+
+```bash
+# All images + tags
+gcloud artifacts docker images list \
+  europe-west1-docker.pkg.dev/flowitup-folio-prod/folio \
+  --include-tags \
+  --format='table(IMAGE,TAGS,UPDATE_TIME.date(tz=Europe/Paris))'
+
+# Repo size + meta
+gcloud artifacts repositories describe folio \
+  --location=europe-west1 --project=flowitup-folio-prod
+
+# Delete a specific SHA (cleanup)
+gcloud artifacts docker images delete \
+  europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/api:<old-sha> \
+  --project=flowitup-folio-prod
+
+# Pull history (who pulled what + when)
+gcloud logging read \
+  'protoPayload.serviceName="artifactregistry.googleapis.com"
+   protoPayload.methodName=~"DownloadFile|GetManifest"' \
+  --project=flowitup-folio-prod --limit=20 \
+  --format='table(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.resourceName)'
+```
+
+**Cost:** $0.10/GB/mo storage + same-region egress is free → ~$0.02/mo at current ~180 MB.
+
+**Cleanup policy** (set up later when SHAs accumulate): Console → Repository → Configure cleanup policies → keep last 30 + delete after 30d.
+
 ### Secret Manager keys consumed by VM
 
 ```
