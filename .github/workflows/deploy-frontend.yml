@@ -154,7 +154,7 @@ jobs:
             --tunnel-through-iap \
             --zone=${{ env.ZONE }} \
             --quiet \
-            --command="/opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} frontend"
+            --command="sudo /opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} frontend"
 
       - name: Purge Cloudflare edge cache
         # Required: /_next/static/* has 1-month edge TTL. Without purge, users
