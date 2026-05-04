@@ -148,6 +148,35 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
+      - name: Sync deploy bundle to VM
+        # Push parent's scripts/deploy/* and docker-compose*.yml onto the VM
+        # so /opt/folio/ always reflects parent master. Avoids drift between
+        # repo and VM and removes the one-time provisioning scp step.
+        run: |
+          set -e
+          gcloud compute scp \
+            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
+            scripts/deploy/deploy-runner.sh \
+            scripts/deploy/wait-healthy.sh \
+            scripts/deploy/rollback.sh \
+            docker-compose.yml \
+            docker-compose.prod.yml \
+            ${{ env.VM_NAME }}:/tmp/
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
+            --command='
+              set -e
+              sudo mkdir -p /opt/folio/scripts
+              sudo mv /tmp/deploy-runner.sh /tmp/wait-healthy.sh /tmp/rollback.sh /opt/folio/scripts/
+              sudo chmod 755 /opt/folio/scripts/*.sh
+              sudo chown root:root /opt/folio/scripts/*.sh
+              sudo mv /tmp/docker-compose.yml /tmp/docker-compose.prod.yml /opt/folio/
+              sudo chmod 644 /opt/folio/docker-compose.yml /opt/folio/docker-compose.prod.yml
+              sudo chown root:root /opt/folio/docker-compose.yml /opt/folio/docker-compose.prod.yml
+              echo "deploy bundle synced:"
+              ls -la /opt/folio/scripts/ /opt/folio/docker-compose*.yml
+            '
+
       - name: Deploy on VM (deploy-runner.sh)
         run: |
           gcloud compute ssh ${{ env.VM_NAME }} \
