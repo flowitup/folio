@@ -152,7 +152,7 @@ jobs:
             --tunnel-through-iap \
             --zone=${{ env.ZONE }} \
             --quiet \
-            --command="/opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} api"
+            --command="sudo /opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} api"
 
       - name: Smoke /health (assert 200 + JSON shape)
         # Cache-bust via ?_=<epoch> to defeat any accidental CF page rule.
