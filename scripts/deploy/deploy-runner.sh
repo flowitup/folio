@@ -41,7 +41,9 @@ log "pulling $SVC:$SHA"
 # Phase 5 "open verification" note.
 if [[ "$SVC" == "api" ]]; then
   log "running migrations (flask db upgrade)"
-  "${COMPOSE[@]}" run --rm -e FLASK_APP=wsgi:app api flask db upgrade
+  # FLASK_APP=app:create_app matches folio-back-end's hexagonal layout
+  # (factory function in app/__init__.py). docs/deployment-guide.md §3.1.
+  "${COMPOSE[@]}" run --rm -e FLASK_APP=app:create_app api flask db upgrade
 fi
 
 # 3. Swap container(s) with --no-deps so dependencies (db/redis/minio) aren't bounced.
