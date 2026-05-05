@@ -1041,6 +1041,75 @@ export default function Page() {
 
 ## Domain Modules
 
+### Billing BC
+
+**Status:** Completed (Phase 260505-1357)
+
+**Purpose:** Outgoing client-facing documents (devis = quotes, factures = client invoices) with per-document PDF export, status lifecycle enforcement, atomic numbering, and user-managed template skeletons. Distinct from the internal `invoices` expense-tracking table.
+
+```
+┌──────────────────── FE ────────────────────┐               ┌─────────────────── BE ──────────────────┐
+│ Sidebar: Billing group                       │               │ Blueprints:                              │
+│  ├─ Devis        → /billing/devis            │               │  /api/v1/billing-documents               │
+│  ├─ Factures     → /billing/factures         │               │  /api/v1/billing-document-templates      │
+│  └─ Templates    → /billing/templates        │               │  /api/v1/company-profile                 │
+│                                              │               │                                          │
+│ Pages:                                       │  REST + JWT   │ Use-cases (app/application/billing/):    │
+│  list.tsx (kind-filtered)                    ◄──────────────►│  CreateBillingDocumentUseCase            │
+│  new.tsx (mode: blank | from-existing | tpl) │               │  CloneBillingDocumentUseCase             │
+│  [id]/page.tsx (edit + status + actions)     │               │  ConvertDevisToFactureUseCase            │
+│  [id]/pdf  → fetch BE PDF, download          │               │  UpdateBillingDocumentUseCase            │
+│  templates/list + edit                       │               │  UpdateBillingDocumentStatusUseCase      │
+│                                              │               │  ListBillingDocumentsUseCase             │
+│ Settings → CompanyProfile section            │               │  GetBillingDocumentUseCase               │
+│                                              │               │  DeleteBillingDocumentUseCase            │
+│ Components:                                  │               │  RenderBillingDocumentPdfUseCase         │
+│  - BillingDocumentForm (items + totals)      │               │  CreateTemplateUseCase / Update / etc.   │
+│  - StatusBadge + StatusTransitionMenu        │               │  GetCompanyProfileUseCase / Upsert       │
+│  - "Create from existing" picker dialog      │               │                                          │
+│  - "Apply template" picker dialog            │               │ Domain (app/domain/billing/):            │
+│  - "Convert to facture" button               │               │  BillingDocument (immutable dataclass)   │
+│                                              │               │  BillingDocumentItem (frozen)            │
+│                                              │               │  BillingDocumentTemplate                 │
+│                                              │               │  CompanyProfile                          │
+│                                              │               │  BillingDocumentKind enum                │
+│                                              │               │  BillingDocumentStatus enum              │
+│                                              │               │                                          │
+│                                              │               │ Infrastructure:                          │
+│                                              │               │  SqlAlchemyBillingDocumentRepository     │
+│                                              │               │  SqlAlchemyBillingTemplateRepository     │
+│                                              │               │  SqlAlchemyCompanyProfileRepository      │
+│                                              │               │  SqlAlchemyBillingNumberCounterRepository│
+│                                              │               │  PdfBillingDocumentRenderer (ReportLab)  │
+└──────────────────────────────────────────────┘               └──────────────────────────────────────────┘
+```
+
+**Tables introduced:**
+
+- `billing_documents` — polymorphic on `kind` (devis | facture); stores issuer snapshot at create time, recipient freetext fields, JSONB `items[]`, status, document number, optional `project_id`, `source_devis_id` (set on convert).
+- `billing_document_templates` — skeleton rows (kind, items, notes, terms, default_vat_rate); no number, no status, no recipient.
+- `company_profile` — one row per user; snapshotted onto each doc at create. Fields: `legal_name`, `address`, `siret`, `tva_number`, `iban`, `bic`, `logo_url`, `default_payment_terms`, `prefix_override`.
+- `billing_number_counters` — `PRIMARY KEY (user_id, kind, year)`, `next_value INT`; locked with `SELECT FOR UPDATE` on generation. Produces `DEV-YYYY-NNN` / `FAC-YYYY-NNN`.
+
+**Status transition matrix:**
+
+| Kind | Allowed transitions |
+|---|---|
+| **devis** | `draft → sent`, `sent → accepted`, `sent → rejected`, `sent → expired`, `accepted ↔ sent` (revert), `rejected → draft` |
+| **facture** | `draft → sent`, `sent → paid`, `sent → overdue`, `sent → cancelled`, `overdue → paid`, `paid → cancelled` (refund) |
+
+Invalid transitions raise `InvalidStatusTransitionError` → HTTP 409.
+
+**Numbering scheme:** Auto-generated, atomic per `(user_id, kind, year)`. Generation acquires a `SELECT … FOR UPDATE` lock on the `billing_number_counters` row inside the create-document transaction, increments `next_value`, and formats `DEV-YYYY-NNN` / `FAC-YYYY-NNN` (3-digit zero-padded). Optional `prefix_override` on `company_profile` prepends a custom token (e.g. `FLW-DEV-2026-001`). Number is read-only after creation.
+
+**Issuer-snapshot pattern:** At create time, all fields from `company_profile` (legal_name, address, siret, tva_number, iban, bic, logo_url) are deep-copied onto `billing_documents.issuer_*` columns. Historical documents are immutable with respect to company settings; if the user later changes their address, existing docs reflect the address at time of creation. Missing `company_profile` → 409 with `reason: "company_profile_missing"`.
+
+**Convert-devis-to-facture race protection:** The convert use-case issues `SELECT FOR UPDATE` on the source devis row before inserting the new facture. A `UNIQUE (source_devis_id)` constraint on `billing_documents` ensures each accepted devis converts at most once; a second concurrent request collides on the constraint → `DevisAlreadyConvertedError` → HTTP 409.
+
+**Endpoints:** 17 — see `docs/checklist/feature-checklist.md` → Billing section.
+
+---
+
 ### Invoices (Factures) Module
 
 **Status:** Completed (Phase 260422-0022)

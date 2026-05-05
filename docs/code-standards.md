@@ -400,6 +400,18 @@ if not permissions:
     redis.setex(cache_key, 3600, permissions)
 ```
 
+## Billing Patterns
+
+### Issuer-snapshot pattern
+
+For any domain entity that represents a historical document (billing, invoices, contracts), snapshot all issuer / source-of-truth fields onto the document row **at create time**. Do NOT JOIN back to the originating settings table at read time. This preserves immutability: if the user changes their company address, outstanding documents retain the address that was accurate when they were issued.
+
+Example: `billing_documents.issuer_legal_name` is populated from `company_profile.legal_name` during `CreateBillingDocumentUseCase.execute()`; it is never updated by a later settings change.
+
+### Decimal-as-string in JSONB
+
+`BillingDocument.items` is a JSONB column containing `BillingDocumentItem` objects. Monetary fields (`unit_price`, `vat_rate`, `quantity`) are `Decimal` in the domain layer and must be serialized as **strings** when writing to JSONB (e.g. `"1234.56"`) to avoid float-drift in PostgreSQL's JSONB representation. Deserialize back to `Decimal` on read before any arithmetic. Never cast to `float` until the final serialization boundary (PDF render / JSON API response).
+
 ## Unresolved Standards Questions
 
 - Async support (Flask 2.0+ async routes vs. Celery for background tasks)
