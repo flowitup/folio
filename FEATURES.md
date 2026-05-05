@@ -28,6 +28,8 @@ URL: `/{locale}/projects`
 
 Grid of project cards (Downtown Office Tower, Shopping Mall Renovation, Riverside Apartments in the seeded data). Each card shows name, address, member count and an action menu; the currently active project is highlighted with a "Selected" badge. A `+ New Project` button sits in the page header.
 
+Each card's kebab opens a `DropdownMenu` with **Edit project** (opens a Dialog pre-filled with name + address — no-op when unchanged), **Delete project** (opens an AlertDialog with cascade copy: workers / labor entries / tasks / expenses / notes / invitations / memberships permanently deleted; quotes + invoices unlinked but kept — gated by typed-name confirmation), and **Show / Hide team**. Edit + Delete only render for the project owner or an admin (`project:create` / `project:*` / `*:*`).
+
 Screenshot: `screenshots/projects.jpg`
 
 ## 4. Project Labor

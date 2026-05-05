@@ -106,6 +106,28 @@
 
 ---
 
+## Projects · Edit + Delete UI
+
+FE-only; uses the existing `PUT /api/v1/projects/<id>` and `DELETE /api/v1/projects/<id>` endpoints (already listed under Backend → Projects).
+
+| Surface | What it does |
+|---|---|
+| Project card kebab (`MoreHorizontal`) on `/{locale}/projects` | Opens shadcn `DropdownMenu`. Items: **Edit**, **Delete** (both gated by `canMutateProject` mirroring BE `can_mutate_project`), **Show / Hide team**. |
+| `EditProjectDialog` | Dialog mirroring `CreateProjectDialog`: pre-fills name + address; no-op close when unchanged; awaits caller's `onUpdated` (refetch) before close so failures surface. |
+| `DeleteProjectDialog` | `AlertDialog` with cascade copy + irreversible warning + billing note. Action button stays disabled until typed text matches `project.name` exactly. Awaits caller's `onDeleted` (refetch) before close. |
+
+**Permission gating (FE mirror of BE rule):** `project.owner_id === user.id || user.permissions.includes("project:create" | "project:*" | "*:*")`.
+
+**Cascade copy (matches FK behavior):**
+- Permanently deleted: workers, labor entries, tasks, expenses (legacy `invoices` table), notes, invitations, project memberships.
+- Unlinked but kept: billing documents (`billing_documents.project_id` → SET NULL).
+
+**i18n:** 19 new keys under `projects.*` for en / fr / vi (parity).
+
+**Tests:** 28 Vitest tests — `EditProjectDialog` (10) + `DeleteProjectDialog` (12) + `updateProject` / `deleteProject` API wrappers (6).
+
+---
+
 ## Invoices · Monthly Export (Excel / PDF)
 
 | Method | Path | Auth | Notes |
