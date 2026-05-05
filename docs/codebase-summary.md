@@ -1,6 +1,6 @@
 # Codebase Summary
 
-**Last Updated:** 2026-05-05
+**Last Updated:** 2026-05-06
 **Total Files:** ~350 (includes .git)
 **Repos:** [`flowitup/folio`](https://github.com/flowitup/folio) (umbrella, this) · [`flowitup/folio-back-end`](https://github.com/flowitup/folio-back-end) · [`flowitup/folio-front-end`](https://github.com/flowitup/folio-front-end)
 
@@ -35,7 +35,7 @@ folio/                                        # umbrella repo (this)
 ### Backend Domain Modules
 
 - **Auth** — JWT login/logout/refresh, Argon2 password hashing, RBAC (`resource:action` permissions), Redis token blacklist.
-- **Projects** — CRUD + membership; `project:read / project:manage_*` permission gates.
+- **Projects** — CRUD + membership; `project:read / project:manage_*` permission gates. FE exposes Edit + Delete via the project card kebab (typed-name confirmation on delete; cascade copy mirrors FK behavior).
 - **Labor** — daily attendance entries, supplement hours (0–12/day), per-project summary (priced + bonus cost), Excel/PDF export.
 - **Invoices** — internal expense tracking: `client | labor | supplier` invoice types, JSONB items column, per-project monthly Excel/PDF export. *(Note: naming is internal only — distinct from outgoing billing below.)*
 - **Invitations** — invite-only signup; single-use token, 7-day expiry, RQ email dispatch.
