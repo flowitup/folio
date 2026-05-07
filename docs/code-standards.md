@@ -400,13 +400,45 @@ if not permissions:
     redis.setex(cache_key, 3600, permissions)
 ```
 
-## Billing Patterns
+## Companies + Billing Patterns
+
+### Sensitive-field masking rule
+
+Every read path that returns a `Company` entity MUST route through `mask_company_for_user(company, requester_role_set)` before the entity reaches the API layer. Never serialize a `Company` object directly to a JSON response.
+
+- Admin (`*:*` in role set): receives full field values.
+- Non-admin: receives last-4-chars masked values (`····5678`; `····` when field length ≤ 4).
+- Masked fields: `siret`, `tva_number`, `iban`, `bic`. Non-sensitive fields (`legal_name`, `address`, `logo_url`, `default_payment_terms`, `prefix_override`) are never masked.
+
+### Two-track sensitive data
+
+Sensitive company fields follow two separate paths:
+
+- **UI / JSON API**: masked for non-admins via `mask_company_for_user`. Admins see full values.
+- **PDF / issuer snapshot**: always full. The PDF renderer reads from `billing_documents.issuer_*` snapshot columns that were populated at create time. Masking is never applied to PDF output or to the snapshot columns. This satisfies the legal requirement that outgoing documents carry complete issuer information.
+
+### Invite token rule
+
+Admin invite tokens use a plaintext-once pattern:
+
+1. Server generates 32 random bytes (base64url), argon2-hashes them, stores only the hash in `company_invite_tokens`.
+2. Plaintext is returned **exactly once** in the `POST /companies/<id>/invite-tokens` response. It is never stored, never logged, never returned again.
+3. On redeem (`POST /companies/attach-by-token`), the server argon2-verifies the submitted token against the stored hash inside a `SELECT FOR UPDATE` transaction that asserts `redeemed_at IS NULL && expires_at > now()` before marking the token redeemed.
+
+### Per-company numbering
+
+Billing document numbers are scoped to the legal entity, not the user:
+
+- `billing_number_counters` PK is `(company_id, kind, year)`.
+- `billing_documents` has a unique constraint on `(company_id, kind, document_number)`.
+- Each company keeps an independent, continuous numbering sequence per document kind per year.
+- The counter row is locked with `SELECT … FOR UPDATE` inside the create-document transaction to prevent number collisions under concurrency.
 
 ### Issuer-snapshot pattern
 
-For any domain entity that represents a historical document (billing, invoices, contracts), snapshot all issuer / source-of-truth fields onto the document row **at create time**. Do NOT JOIN back to the originating settings table at read time. This preserves immutability: if the user changes their company address, outstanding documents retain the address that was accurate when they were issued.
+For any domain entity that represents a historical document (billing, invoices, contracts), snapshot all issuer / source-of-truth fields onto the document row **at create time**. Do NOT JOIN back to the originating settings table at read time. This preserves immutability: if an admin changes the company address, outstanding documents retain the address that was accurate when they were issued.
 
-Example: `billing_documents.issuer_legal_name` is populated from `company_profile.legal_name` during `CreateBillingDocumentUseCase.execute()`; it is never updated by a later settings change.
+Example: `billing_documents.issuer_legal_name` is populated from the selected `Company.legal_name` during `CreateBillingDocumentUseCase.execute()`; it is never updated by a later company edit.
 
 ### Decimal-as-string in JSONB
 
