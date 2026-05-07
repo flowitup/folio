@@ -1,6 +1,6 @@
 # Feature Implementation Checklist
 
-**Last Updated:** 2026-05-05
+**Last Updated:** 2026-05-07
 **Project:** Construction Management System
 
 ---
@@ -166,6 +166,8 @@ Auth for all routes: `@jwt_required()` + row-level ownership check (`billing_doc
 
 **Total: 17 endpoints** across 3 blueprints (`billing_documents_bp`, `billing_templates_bp`, `company_profile_bp`).
 
+> **Note:** `company_profile_bp` is retired by the Companies module below. Billing doc endpoints now require `company_id` in the request body.
+
 **Error → HTTP mapping:**
 - 400 — Pydantic validation
 - 403 — `ForbiddenBillingDocumentError`
@@ -178,3 +180,41 @@ Auth for all routes: `@jwt_required()` + row-level ownership check (`billing_doc
 **New BE dependencies:** none beyond existing `reportlab`, `python-slugify` (already in requirements from labor export)
 **New FE dependencies:** none (reuses shadcn/ui Dialog, Table, Form, existing `formatEUR`, `triggerBrowserDownload`)
 **i18n namespaces added:** `billing.*`, `companyProfile.*` (en / fr / vi parity)
+
+---
+
+## Companies
+
+Auth for all routes: `@jwt_required()`. Admin-only endpoints require `*:*` permission. Rate limits as noted.
+
+| Method | Path | Use-case | Permission | Rate-limit |
+|---|---|---|---|---|
+| GET | `/api/v1/companies` | List user's attached companies; `?scope=all` returns all companies (admin) | jwt | — |
+| POST | `/api/v1/companies` | Create company | jwt + `*:*` | 10/min |
+| GET | `/api/v1/companies/<id>` | Get company (full if admin, sensitive-field masked otherwise) | jwt + (admin OR attached) | — |
+| PUT | `/api/v1/companies/<id>` | Update company | jwt + `*:*` | 30/min |
+| DELETE | `/api/v1/companies/<id>` | Delete company (hard-delete; cascades access + tokens) | jwt + `*:*` | — |
+| POST | `/api/v1/companies/<id>/invite-tokens` | Generate invite token; returns plaintext ONCE; `?regenerate=true` invalidates existing | jwt + `*:*` | 10/min |
+| DELETE | `/api/v1/companies/<id>/invite-tokens/active` | Revoke active invite token | jwt + `*:*` | — |
+| POST | `/api/v1/companies/attach-by-token` | Redeem invite token; attaches company to caller | jwt | 5/min |
+| DELETE | `/api/v1/companies/<id>/access` | Self-detach from company | jwt + attached | — |
+| DELETE | `/api/v1/companies/<id>/access/<user_id>` | Admin boot a user from a company | jwt + `*:*` | 30/min |
+| GET | `/api/v1/companies/<id>/attached-users` | List users attached to company | jwt + `*:*` | — |
+| PUT | `/api/v1/users/me/primary-company` | Set caller's primary company | jwt | 30/min |
+
+**Total: 12 endpoints** across 2 blueprints (`companies_bp`, `users_me_bp`).
+
+**Error → HTTP mapping:**
+- 403 — `ForbiddenCompanyError` (non-admin on admin-only endpoint)
+- 404 — `CompanyNotFoundError`, `UserCompanyAccessNotFoundError`, `InviteTokenNotFoundError`
+- 409 — `ActiveInviteTokenAlreadyExistsError`, `CompanyAlreadyAttachedError`
+- 410 — `InviteTokenExpiredError` (`reason: "expired"`), `InviteTokenAlreadyRedeemedError` (`reason: "already_redeemed"`)
+- 422 — Pydantic body / missing `company_id` on billing doc create
+- 429 — rate limited
+
+**New tables:** `companies`, `user_company_access`, `company_invite_tokens`
+**Modified tables:** `billing_documents` (+ `company_id` FK), `billing_number_counters` (PK re-keyed to `company_id`)
+**Dropped table:** `company_profile`
+**New BE dependencies:** `argon2-cffi` (already a dep from invitation hashing)
+**New FE dependencies:** none (reuses shadcn/ui Select, Dialog, existing company-picker primitives)
+**i18n namespaces added:** `companies.*` (en / fr / vi parity)

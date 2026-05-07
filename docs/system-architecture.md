@@ -1110,6 +1110,81 @@ Invalid transitions raise `InvalidStatusTransitionError` → HTTP 409.
 
 ---
 
+### Companies BC
+
+**Status:** Completed (Phase 260506-0048, BE PR #30, FE PR #43)
+
+**Purpose:** Admin-managed shared legal entities (`companies`) that users attach via single-use invite tokens. Replaces the former 1:1 `company_profile`. Each user can hold many attached companies; the billing-document create form gains a mandatory company picker. Sensitive fields are masked in API responses for non-admins; PDFs always render full values (legal requirement).
+
+```
+┌────────────────── FE ──────────────────┐        ┌──────────────────── BE ──────────────────┐
+│ Settings / My companies (all users)     │        │ /api/v1/companies                         │
+│  ├─ masked company cards               │        │  ├─ GET (list: my attached OR all if admin)│
+│  ├─ "Add company" → token redeem dialog│        │  ├─ POST (admin create)       10/min       │
+│  ├─ "Set primary" toggle               │        │  ├─ GET <id> (full if admin, masked else)  │
+│  └─ "Detach" button                    │        │  ├─ PUT <id> (admin edit)     30/min       │
+│                                        │        │  └─ DELETE <id> (admin)                   │
+│ Settings / All companies (admin only)  │        │                                            │
+│  ├─ full-value company list            │        │ /api/v1/companies/<id>/invite-tokens       │
+│  ├─ "New company" form                 │        │  ├─ POST (generate, returns plaintext once)│
+│  └─ per-company manage page           │        │  └─ DELETE active (revoke)                │
+│      ├─ Edit fields                    │        │                                            │
+│      ├─ "Generate invite token" modal  │        │ /api/v1/companies/attach-by-token          │
+│      │  (one-shot copy, shows expiry) │        │  └─ POST (user redeems)       5/min        │
+│      ├─ Attached users list            │        │                                            │
+│      └─ "Boot user" / "Delete company" │        │ /api/v1/companies/<id>/access              │
+│                                        │        │  ├─ DELETE (self-detach)                   │
+│ Billing doc create form                │        │  └─ DELETE /<user_id> (admin boot) 30/min  │
+│  └─ CompanyPickerSelect at top         │        │                                            │
+│     ├─ 0 attached → redirect Settings  │        │ /api/v1/companies/<id>/attached-users      │
+│     ├─ 1 attached → auto-use           │        │  └─ GET (admin list)                       │
+│     └─ 2+ → dropdown, default primary  │        │                                            │
+│        or localStorage last-used       │        │ /api/v1/users/me/primary-company           │
+│                                        │        │  └─ PUT <company_id>          30/min       │
+└────────────────────────────────────────┘        └──────────────────────────────────────────┘
+```
+
+**Tables introduced:**
+
+- `companies` — `id UUID PK`, `legal_name`, `address`, `siret`, `tva_number`, `iban`, `bic`, `logo_url`, `default_payment_terms`, `prefix_override` (pattern `^[A-Z0-9]{1,8}$`), `created_by UUID FK(users)`, timestamps. Indexes: `legal_name`, `created_by`.
+- `user_company_access` — `(user_id, company_id) PK` (both FK cascade), `is_primary BOOL NOT NULL DEFAULT FALSE`, `attached_at`. Partial unique `(user_id) WHERE is_primary=TRUE` enforces at-most-one primary per user.
+- `company_invite_tokens` — `id UUID PK`, `company_id FK(companies) ON DELETE CASCADE`, `token_hash TEXT` (argon2), `created_by FK(users)`, `created_at`, `expires_at` (created_at + 7 days), `redeemed_at TIMESTAMPTZ NULL`, `redeemed_by UUID NULL`. Partial unique `(company_id) WHERE redeemed_at IS NULL` — only one active token per company at a time.
+
+**Tables modified:**
+
+- `billing_documents` — gains `company_id UUID FK(companies) ON DELETE SET NULL`. After migration backfill this is `NOT NULL` for all post-migration documents (legacy pre-migration rows remain NULL-safe via `ON DELETE SET NULL`).
+- `billing_number_counters` — PK re-keyed from `(user_id, kind, year)` to `(company_id, kind, year)`; `user_id` column dropped. Each company keeps its own continuous numbering sequence per kind per year.
+
+**Table dropped:** `company_profile` — retired after migration backfill.
+
+**Token lifecycle:**
+
+```
+admin → POST /companies/<id>/invite-tokens
+          └─ generate 32-byte random token
+          └─ argon2-hash → store in company_invite_tokens
+          └─ return plaintext token ONCE (never stored, never loggable)
+             dialog shows: token + expires_at (ISO)
+
+user copies plaintext → pastes into "Add company" dialog
+  → POST /companies/attach-by-token { token: "<plaintext>" }
+       └─ argon2-verify against unredeemed tokens for all companies
+       └─ SELECT FOR UPDATE on matching row
+       └─ assert redeemed_at IS NULL && expires_at > now()
+       └─ mark redeemed_at = now(), redeemed_by = user_id
+       └─ INSERT user_company_access (is_primary=true if first attachment)
+```
+
+**Masking helper pattern:**
+
+`mask_company_for_user(company, requester_role_set)` in `app/domain/billing/company_masking.py` (adjacent to the billing issuer-snapshot pattern). Admin (`*:*` in role set) receives full fields; all others receive last-4 masked values (`····5678`; `····` when field has fewer than 4 chars). Applied in `ListMyCompaniesUseCase` and `GetCompanyUseCase` before the entity reaches the API layer. PDF renderer reads `billing_documents.issuer_*` snapshot columns — never re-fetches from `companies` — so masking is never applied to PDF output.
+
+**Migration summary (single Alembic revision, reversible):**
+
+One revision creates `companies`, `user_company_access`, `company_invite_tokens`, adds `billing_documents.company_id`, then: (1) INSERTs one row into `companies` for each existing `company_profile` row (`created_by = user_id`); (2) INSERTs one `user_company_access` row per user (`is_primary=true`); (3) re-keys `billing_number_counters` — for each old `(user_id, kind, year)` row, finds the user's migrated primary company and inserts `(company_id, kind, year, next_value)`, then drops the `user_id` column; (4) backfills `billing_documents.company_id` for every existing row using the doc owner's primary company at migration time; (5) `DROP TABLE company_profile`. Round-trip verified (`flask db upgrade && flask db downgrade -1 && flask db upgrade head`) on real Postgres before merge.
+
+---
+
 ### Invoices (Factures) Module
 
 **Status:** Completed (Phase 260422-0022)

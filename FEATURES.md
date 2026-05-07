@@ -178,17 +178,17 @@ Screenshot: `screenshots/unauthorized.jpg`
 
 URLs: `/{locale}/billing/devis`, `/{locale}/billing/factures`, `/{locale}/billing/templates`
 
-Outgoing client-facing pricing proposals and invoices, with per-document PDF export, status lifecycle (`draft → sent → accepted/rejected/expired` for devis; `draft → sent → paid/overdue/cancelled` for factures), atomic per-(user, kind, year) document numbering (`DEV-YYYY-NNN` / `FAC-YYYY-NNN`), and user-managed template skeletons for fast doc creation. Issuer info sourced from per-user `company_profile` in Settings; snapshotted onto each doc at create time so historical documents are immutable.
+Outgoing client-facing pricing proposals and invoices, with per-document PDF export, status lifecycle (`draft → sent → accepted/rejected/expired` for devis; `draft → sent → paid/overdue/cancelled` for factures), atomic per-(company, kind, year) document numbering (`DEV-YYYY-NNN` / `FAC-YYYY-NNN`), and user-managed template skeletons for fast doc creation. Issuer info sourced from the selected company; snapshotted onto each doc at create time so historical documents are immutable.
 
 **Sub-routes:**
 - `/billing/devis` — list + filter by status; `+ New Devis` CTA; empty state.
-- `/billing/devis/new` — blank form, "from existing" picker, or "apply template" picker.
+- `/billing/devis/new` — blank form, "from existing" picker, or "apply template" picker; company picker at top.
 - `/billing/devis/[id]` — edit form with live HT/TVA/TTC totals, status transition menu, Download PDF, and "Convert to Facture" action (accepted devis only).
 - `/billing/factures` — same shape as devis list, facture-specific statuses.
 - `/billing/factures/new` — same three creation modes.
 - `/billing/factures/[id]` — edit + status menu + Download PDF; no convert action.
 - `/billing/templates` — list by kind; create / edit / delete skeletons.
-- `/settings` → Company Profile section — legal_name, address, SIRET, TVA number, IBAN, BIC, logo URL, default payment terms, number prefix override.
+- `/settings` → Companies section — manage attached companies; admin manages all companies + invite tokens.
 
 **Key behaviors:**
 - Items table: Description / Qty / Unit price HT / VAT% / Total HT; per-rate TVA breakdown + grand total TTC computed live.
@@ -198,6 +198,22 @@ Outgoing client-facing pricing proposals and invoices, with per-document PDF exp
 - All routes `@jwt_required()`; user owns their own documents (no project-membership check unless `project_id` is set on the doc).
 
 **Out of scope (v1):** bulk export, email-as-attachment, separate clients directory, multi-currency, attachments, e-signature.
+
+## 12. Multi-company profiles
+
+Admin-managed shared companies (legal entities) attached to user accounts via 7-day single-use invite tokens. Replaces the former 1:1 `company_profile` model; existing profiles auto-migrate with no user action required.
+
+**Key behaviors:**
+- Admin creates a company, generates an invite token (plaintext shown once, argon2-hashed in DB); user pastes the token in Settings → a `user_company_access` row is created with `is_primary=true` on first attachment.
+- Per-company numbering: `billing_number_counters` re-keyed to `(company_id, kind, year)`; `billing_documents` unique on `(company_id, kind, document_number)` so each legal entity has an independent continuous sequence.
+- Sensitive fields (`siret`, `tva_number`, `iban`, `bic`) masked in UI for non-admins (`····5678`); full values always rendered on PDFs (legal requirement) via the existing issuer-snapshot columns.
+- Doc create form gains `<CompanyPickerSelect>`: auto-uses if user has exactly 1 company; dropdown with primary/last-used (localStorage `billing.lastCompanyId.${kind}`) defaults for 2+.
+- Admin boot (remove a user from a company) returns 409 `company_no_longer_attached` if the user attempts to save a doc from that company mid-flow.
+
+**Endpoints:** 12 (see `docs/checklist/feature-checklist.md` → Companies section)
+**New tables:** `companies`, `user_company_access`, `company_invite_tokens`
+**Modified tables:** `billing_documents` (+ `company_id`), `billing_number_counters` (re-keyed PK)
+**Dropped table:** `company_profile`
 
 ---
 
