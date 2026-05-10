@@ -199,6 +199,17 @@ Outgoing client-facing pricing proposals and invoices, with per-document PDF exp
 
 **Out of scope (v1):** bulk export, email-as-attachment, separate clients directory, multi-currency, attachments, e-signature.
 
+### Activity suggestions + line-item categories (added phase 260510-2225)
+
+- Each line item now carries an optional `category` (e.g. *Toiture*, *Menuiserie*, *Plomberie*) — stored inside the existing JSONB items blob; no DB migration.
+- New "Section" column in the items editor (left of description). Both columns are typeahead Comboboxes (`cmdk`-based shadcn primitive, debounced 200ms). Description suggestions auto-fill unit / unit price / VAT rate from the most recent past use; free-text on Enter/blur creates a new value.
+- `GET /api/v1/billing-documents/activity-suggestions` returns the requester's distinct (category, description) pairs ranked by frequency, with `last_*` hints. User-scoped; never leaks across users.
+
+### Historical document import
+
+- `POST /api/v1/billing-documents/import` accepts a verbatim `document_number`, explicit `status`, and optional `created_at`, bypassing auto-numbering for legacy ingestion. Counter is bumped to `MAX(existing, parsed_seq)` so future user-created docs continue from the right point.
+- One-shot script `folio-back-end/scripts/import_legacy_factures.py` parses xlsx + PDF source files into the import payload. Idempotent on duplicate document numbers (HTTP 409 → skip).
+
 ## 12. Multi-company profiles
 
 Admin-managed shared companies (legal entities) attached to user accounts via 7-day single-use invite tokens. Replaces the former 1:1 `company_profile` model; existing profiles auto-migrate with no user action required.

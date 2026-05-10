@@ -156,6 +156,8 @@ Auth for all routes: `@jwt_required()` + row-level ownership check (`billing_doc
 | PATCH | `/api/v1/billing-documents/<id>/status` | Transition status; validates per-kind matrix; 409 on invalid transition | 30/min |
 | GET | `/api/v1/billing-documents/<id>/pdf` | Render + stream PDF via ReportLab (DejaVu fonts) | 5/min |
 | POST | `/api/v1/billing-documents/from-template/<template_id>` | Apply template → new document (recipient + dates supplied in body) | 10/min |
+| POST | `/api/v1/billing-documents/import` | Import legacy doc with verbatim `document_number` + explicit `status` + optional `created_at`; bumps counter to `MAX(existing, parsed_seq)`; 409 on duplicate `(company_id, kind, document_number)` | 30/min |
+| GET | `/api/v1/billing-documents/activity-suggestions?category=&q=&limit=` | Distinct line-item descriptions ranked by frequency, scoped to current user; `Cache-Control: no-cache, must-revalidate`; returns `{categories, suggestions[]}` with `last_unit/last_unit_price/last_vat_rate` hints | 60/min |
 | GET | `/api/v1/billing-document-templates` | List templates (owner-filtered; optional `?kind=...`) | — |
 | POST | `/api/v1/billing-document-templates` | Create template | 10/min |
 | GET | `/api/v1/billing-document-templates/<id>` | Get template | — |

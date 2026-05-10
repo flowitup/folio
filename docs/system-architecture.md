@@ -1108,6 +1108,24 @@ Invalid transitions raise `InvalidStatusTransitionError` → HTTP 409.
 
 **Endpoints:** 17 — see `docs/checklist/feature-checklist.md` → Billing section.
 
+**Activity suggestions + line-item categories (Phase 260510-2225):**
+
+- `BillingDocumentItem` value object gains optional `category: Optional[str]` (max 120 chars; trimmed; empty → None). Persisted inside the existing `billing_documents.items` JSONB blob — no DB migration. Legacy items without the key deserialize as `category=None`.
+- `GET /api/v1/billing-documents/activity-suggestions?category=&q=&limit=` — `@jwt_required()`, 60/min, `Cache-Control: no-cache, must-revalidate`. Returns `{ categories: [{name, frequency}], suggestions: [{description, category|null, frequency, last_unit, last_unit_price, last_vat_rate}] }`. User-scoped (no cross-user leak). Postgres path uses `jsonb_array_elements` lateral; SQLite path is in-Python aggregation; both produce the same shape.
+- `BillingNumberCounterRepositoryPort.bump_to_at_least(company_id, kind, year, value)` — atomic upsert (`INSERT … ON CONFLICT DO UPDATE SET value = GREATEST(value, EXCLUDED.value)` on Postgres; SELECT-then-UPDATE on SQLite).
+
+**Historical-import flow:**
+
+- `POST /api/v1/billing-documents/import` — `@jwt_required()`, 30/min. Pydantic `ImportBillingDocumentRequest` extends create with `document_number: str (1..32)`, `status: Literal["draft","sent","paid","cancelled"]`, `created_at?: datetime`. Same `assert_user_company_access` check as create.
+- `ImportBillingDocumentUseCase` snapshots issuer from the resolved company, validates items, regex-matches `document_number` for `^[A-Za-z]+(?P<year>\d{4})-?(?P<seq>\d+)$` and calls `bump_to_at_least(company, kind, year, seq)` when matched (skips bump for irregular numbers like `FAC0026-ANN-2025-11/08`). IntegrityError on the unique `(company_id, kind, document_number)` constraint → `BillingDocumentAlreadyExistsError` → HTTP 409 (idempotent retries).
+- One-shot CLI `folio-back-end/scripts/import_legacy_factures.py` parses xlsx (preferred) / PDF (fallback) → JSON manifest → POSTs each via the import endpoint. Driven by env-supplied API token; `--dry-run` default; `--apply` to commit.
+
+**FE — Combobox suggestion UI:**
+
+- `cmdk` runtime dep added; new shadcn primitives `src/components/ui/command.tsx` + `src/components/ui/combobox.tsx`.
+- `BillingDocumentItemsEditor` row gains a "Section" Combobox (left of description) + a description Combobox. Both debounced 200ms; per-form Map cache keyed by `(category||'')+'|'+q`. Selecting a description suggestion pre-fills `unit/unit_price/vat_rate` from the `last_*` hints (each remains editable). Free-text path: typed value used as-is on Enter/blur.
+- New i18n keys under `billing.form.items`: `categoryLabel`, `categoryPlaceholder`, `descriptionSuggestionsHeading`, `noSuggestions`, `categoryNoMatches`. en/fr/vi parity (French canonical).
+
 ---
 
 ### Companies BC

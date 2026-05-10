@@ -73,4 +73,6 @@ folio/                                        # umbrella repo (this)
 - **Sensitive-field masking** — `mask_company_for_user(company, role_set)` applied on every read path; admin (`*:*`) sees full values; non-admin sees last-4 masked (`····5678`). PDF renders full values from the issuer snapshot (legal requirement).
 - **Decimal-as-string in JSONB** — `BillingDocument.items` stored as JSONB; monetary `Decimal` values serialized as strings to avoid float drift.
 - **Lazy notification computation** — `notes_dismissed` dismissal table; no background job; SQL fires at read time.
-- **JSONB items** — both `invoices` and `billing_documents` store line items as JSONB (no separate items table).
+- **JSONB items** — both `invoices` and `billing_documents` store line items as JSONB (no separate items table). Items optionally carry a `category` (section header — Toiture, Menuiserie, Plomberie…) used for grouped activity suggestions.
+- **Activity suggestions** — `GET /billing-documents/activity-suggestions?category=&q=` aggregates the requester's past line items grouped by `(category, description)`, ranked by frequency, with `last_unit/last_unit_price/last_vat_rate` pre-fill hints. Backs the items-editor Combobox.
+- **Historical import** — `POST /billing-documents/import` accepts a verbatim `document_number` + explicit `status` + optional `created_at`, and bumps the per-`(company, kind, year)` counter to `MAX(existing, parsed_seq)`. Used to ingest legacy invoices without breaking the auto-numbering of new docs.
