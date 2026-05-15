@@ -8,10 +8,15 @@
 # Flow: checkout submodule@<sha> → buildx with NEXT_PUBLIC_API_BASE_URL baked
 #   → push to AR (tag <sha> + latest) → gcloud IAP SSH →
 #   /opt/folio/scripts/deploy-runner.sh <sha> frontend → CF cache purge →
-#   smoke / (follows next-intl locale redirect) → submodule pointer bump.
+#   smoke / (follows next-intl locale redirect) → (separate job) submodule
+#   pointer bump.
 #
 # Note: NEXT_PUBLIC_* envs are baked into the JS bundle at build time. If the
 # prod domain ever changes, all FE images need rebuilding.
+#
+# Permission model: see deploy-backend.yml. Build runs untrusted submodule
+# source under contents:read; bump-pointer is a separate job with
+# contents:write that runs only after build succeeds.
 #
 # Plan: plans/260503-0913-parent-auto-deploy-on-version-bump/phase-02-...md
 # Runbook: docs/deployment-guide.md §3.1, §4.1
@@ -36,10 +41,6 @@ concurrency:
   group: deploy-prod-frontend
   cancel-in-progress: false
 
-permissions:
-  contents: write   # commit submodule pointer bump back to parent master
-  id-token: write   # required for Workload Identity Federation OIDC token
-
 env:
   PROJECT_ID: flowitup-folio-prod
   REGION: europe-west1
@@ -52,9 +53,18 @@ env:
   SUBMODULE_PATH: folio-front-end
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Build job is read-only on parent contents. See deploy-backend.yml for
+    # the rationale: a build-time exfil of GITHUB_TOKEN must not be able to
+    # push to parent master.
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      sha: ${{ steps.input.outputs.sha }}
+      version: ${{ steps.input.outputs.version }}
     steps:
       - name: Resolve inputs (dispatch vs manual)
         id: input
@@ -72,11 +82,11 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "::notice::deploying frontend v$VERSION (sha $SHA)"
 
-      - name: Checkout parent (for pointer commit)
+      - name: Checkout parent (for deploy scripts + compose files)
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
-          fetch-depth: 0
+          persist-credentials: false
+          fetch-depth: 1
 
       - name: Checkout folio-front-end at SHA
         uses: actions/checkout@v4
@@ -228,23 +238,63 @@ jobs:
           echo "::error::smoke failed — / did not return 200 with Next.js marker after 5 tries"
           exit 1
 
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Frontend deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
+          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy Frontend — build"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Version | v${{ steps.input.outputs.version }} |"
+            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
+            echo "| Trigger | ${{ github.event_name }} |"
+            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bump-pointer:
+    # Runs ONLY after build+smoke succeed. Sole task is to write the submodule
+    # pointer commit back to parent master — contains no untrusted-code path
+    # that could touch the contents:write token.
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout parent (with write credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
       - name: Bump folio-front-end pointer in parent master
         # Writes the gitlink directly via update-index (no second clone needed,
         # so no cross-repo auth dance for the submodule remote). On race with
         # a human master push, retry fetch+rebase+push up to 3x with backoff.
+        env:
+          SHA: ${{ needs.build.outputs.sha }}
+          VERSION: ${{ needs.build.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -e
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git update-index --add --cacheinfo 160000,${{ steps.input.outputs.sha }},${{ env.SUBMODULE_PATH }}
+          git update-index --add --cacheinfo "160000,${SHA},${SUBMODULE_PATH}"
           if git diff --cached --quiet; then
-            echo "submodule pointer already at ${{ steps.input.outputs.sha }} — nothing to commit"
+            echo "submodule pointer already at ${SHA} — nothing to commit"
             exit 0
           fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            commit_msg="chore(deploy): folio-front-end → ${{ steps.input.outputs.sha }} [manual] [skip ci]"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            commit_msg="chore(deploy): folio-front-end → ${SHA} [manual] [skip ci]"
           else
-            commit_msg="chore(deploy): folio-front-end → ${{ steps.input.outputs.sha }} (v${{ steps.input.outputs.version }}) [skip ci]"
+            commit_msg="chore(deploy): folio-front-end → ${SHA} (v${VERSION}) [skip ci]"
           fi
           git commit -m "$commit_msg"
           for i in 1 2 3; do
@@ -263,23 +313,3 @@ jobs:
           done
           echo "::error::failed to push pointer commit after 3 retries — deploy is live, parent master is stale"
           exit 1
-
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "::error::Frontend deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
-          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "## Deploy Frontend"
-            echo ""
-            echo "| Field | Value |"
-            echo "|---|---|"
-            echo "| Version | v${{ steps.input.outputs.version }} |"
-            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
-            echo "| Trigger | ${{ github.event_name }} |"
-            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
-          } >> "$GITHUB_STEP_SUMMARY"

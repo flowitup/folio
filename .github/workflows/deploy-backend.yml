@@ -7,7 +7,15 @@
 #
 # Flow: checkout submodule@<sha> → buildx → push to AR (tag <sha> + latest)
 #   → gcloud IAP SSH → /opt/folio/scripts/deploy-runner.sh <sha> api
-#   → smoke /health → commit submodule pointer bump on master.
+#   → smoke /health → (separate job) commit submodule pointer bump on master.
+#
+# Permission model: the build job runs untrusted submodule source (post-install
+# hooks, malicious Python wheels) inside docker buildx. It must NOT hold a
+# token that can write to parent master. The build job's GITHUB_TOKEN is
+# `contents: read` only. A separate bump-pointer job, gated by `needs: build`,
+# holds `contents: write` and runs only after build+smoke succeed — its only
+# step is the gitlink commit, so there's no untrusted code path that touches
+# the write-scoped token.
 #
 # Plan: plans/260503-0913-parent-auto-deploy-on-version-bump/phase-01-...md
 # Runbook: docs/deployment-guide.md §3.1, §4.1
@@ -32,10 +40,6 @@ concurrency:
   group: deploy-prod-backend
   cancel-in-progress: false
 
-permissions:
-  contents: write   # commit submodule pointer bump back to parent master
-  id-token: write   # required for Workload Identity Federation OIDC token
-
 env:
   PROJECT_ID: flowitup-folio-prod
   REGION: europe-west1
@@ -48,9 +52,20 @@ env:
   SUBMODULE_PATH: folio-back-end
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Default-narrow: read-only on parent contents. The build step pulls
+    # submodule source at an attacker-controlled SHA and runs it through
+    # docker buildx; a build-time exfil of GITHUB_TOKEN therefore cannot
+    # push to parent master. `id-token: write` is required by WIF (the OIDC
+    # token is bound to this workflow run, not to repo contents).
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      sha: ${{ steps.input.outputs.sha }}
+      version: ${{ steps.input.outputs.version }}
     steps:
       - name: Resolve inputs (dispatch vs manual)
         id: input
@@ -68,11 +83,13 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "::notice::deploying api v$VERSION (sha $SHA)"
 
-      - name: Checkout parent (for pointer commit)
+      - name: Checkout parent (for deploy scripts + compose files)
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
-          fetch-depth: 0
+          # Build job is contents:read — no need to persist credentials in
+          # the worktree (eliminates one exfil vector).
+          persist-credentials: false
+          fetch-depth: 1
 
       - name: Checkout folio-back-end at SHA
         uses: actions/checkout@v4
@@ -210,23 +227,65 @@ jobs:
           echo "::error::smoke failed — /health did not return 200 with healthy JSON after 5 tries"
           exit 1
 
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::API deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
+          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy Backend — build"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Version | v${{ steps.input.outputs.version }} |"
+            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
+            echo "| Trigger | ${{ github.event_name }} |"
+            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bump-pointer:
+    # Runs ONLY after build+smoke succeed. Its sole task is to write the
+    # submodule pointer commit back to parent master — so the `contents:write`
+    # token is held by a job that contains no untrusted-code path. The build
+    # job's potentially-malicious docker-build step has already completed and
+    # released its (read-only) token before this job starts.
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout parent (with write credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
       - name: Bump folio-back-end pointer in parent master
         # Writes the gitlink directly via update-index (no second clone needed,
         # so no cross-repo auth dance for the submodule remote). On race with
         # a human master push, retry fetch+rebase+push up to 3x with backoff.
+        env:
+          SHA: ${{ needs.build.outputs.sha }}
+          VERSION: ${{ needs.build.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -e
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git update-index --add --cacheinfo 160000,${{ steps.input.outputs.sha }},${{ env.SUBMODULE_PATH }}
+          git update-index --add --cacheinfo "160000,${SHA},${SUBMODULE_PATH}"
           if git diff --cached --quiet; then
-            echo "submodule pointer already at ${{ steps.input.outputs.sha }} — nothing to commit"
+            echo "submodule pointer already at ${SHA} — nothing to commit"
             exit 0
           fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            commit_msg="chore(deploy): folio-back-end → ${{ steps.input.outputs.sha }} [manual] [skip ci]"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            commit_msg="chore(deploy): folio-back-end → ${SHA} [manual] [skip ci]"
           else
-            commit_msg="chore(deploy): folio-back-end → ${{ steps.input.outputs.sha }} (v${{ steps.input.outputs.version }}) [skip ci]"
+            commit_msg="chore(deploy): folio-back-end → ${SHA} (v${VERSION}) [skip ci]"
           fi
           git commit -m "$commit_msg"
           for i in 1 2 3; do
@@ -245,23 +304,3 @@ jobs:
           done
           echo "::error::failed to push pointer commit after 3 retries — deploy is live, parent master is stale"
           exit 1
-
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "::error::API deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
-          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "## Deploy Backend"
-            echo ""
-            echo "| Field | Value |"
-            echo "|---|---|"
-            echo "| Version | v${{ steps.input.outputs.version }} |"
-            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
-            echo "| Trigger | ${{ github.event_name }} |"
-            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
