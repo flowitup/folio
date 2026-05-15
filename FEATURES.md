@@ -226,6 +226,28 @@ Admin-managed shared companies (legal entities) attached to user accounts via 7-
 **Modified tables:** `billing_documents` (+ `company_id`), `billing_number_counters` (re-keyed PK)
 **Dropped table:** `company_profile`
 
+## 13. Invoice payment method (per-company list with snapshot label)
+
+URLs: `/{locale}/settings/companies/{id}` (Payment Methods card) + `/{locale}/projects/{projectId}/invoices/new` (Payment method dropdown on the invoice form).
+
+Each company carries a CRUD-able list of payment methods used when recording invoices. On company create, two builtins are seeded: `Cash` and the company `legal_name` (e.g. `Folio Test SARL`). Members can add their own (Wise, Stripe, bank account labels, …); built-ins can be **renamed** but not **deleted/deactivated** (badge: `Built-in`).
+
+Invoices reference a method by id but **also persist the label as a snapshot** at write time. Renaming a method later does not change the historical invoice's label — the snapshot survives soft-delete and rename, providing audit safety.
+
+**Key behaviors:**
+- List read = any company member (404 on cross-tenant requests; no info leak).
+- Create / rename / soft-delete = global `*:*` admin (mirrors existing CompanyUseCases pattern).
+- Soft-delete preserves the `payment_methods` row; partial unique index allows re-creating a same-label method afterward.
+- Invoice edit accepts `payment_method_id: null` to clear; detail row shows `—` when cleared.
+- FE Settings card supports inline-add, edit-in-place, delete-confirm dialog (with `usage_count` badge to warn when methods are referenced).
+- Invoice form uses a `PaymentMethodSelect` combobox with inline-create — typing a new label and pressing Enter POSTs and selects the result without leaving the form.
+- i18n parity across en/fr/vi for `paymentMethods.*` and `invoices.paymentMethod.*` (35 keys × 3 locales).
+
+**Endpoints:** 4 (see `docs/checklist/feature-checklist.md` → Payment Methods section)
+**New tables:** `payment_methods`
+**Modified tables:** `invoices` (+ `payment_method_id`, `payment_method_label`)
+**Migration:** `cea9f050672d_add_payment_methods_and_invoice_columns` — backfills `Cash` + `TRIM(legal_name)` builtins for every existing company; reversible.
+
 ---
 
 ## Cross-cutting features visible in every authenticated page

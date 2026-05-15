@@ -220,3 +220,32 @@ Auth for all routes: `@jwt_required()`. Admin-only endpoints require `*:*` permi
 **New BE dependencies:** `argon2-cffi` (already a dep from invitation hashing)
 **New FE dependencies:** none (reuses shadcn/ui Select, Dialog, existing company-picker primitives)
 **i18n namespaces added:** `companies.*` (en / fr / vi parity)
+
+## Payment Methods (per-company invoice payment metadata)
+
+| Method | Path | Notes | Auth | Rate limit |
+|---|---|---|---|---|
+| GET | `/api/v1/companies/<id>/payment-methods?include_inactive=` | List active methods (active-only by default; admin can see soft-deleted via flag); each row includes `usage_count` | jwt + (member OR `*:*`) | — |
+| POST | `/api/v1/companies/<id>/payment-methods` | Create new method; `extra="forbid"` rejects unknown body keys | jwt + `*:*` | 30/min |
+| PATCH | `/api/v1/companies/<id>/payment-methods/<pm_id>` | Rename or toggle `is_active`; builtin can be renamed but not deactivated (409) | jwt + `*:*` | 30/min |
+| DELETE | `/api/v1/companies/<id>/payment-methods/<pm_id>` | Soft-delete (sets `is_active=false`); builtin returns 409 | jwt + `*:*` | 30/min |
+
+**Total: 4 endpoints** across 1 blueprint (`payment_methods_bp`).
+
+**Error → HTTP mapping:**
+- 401 — missing or invalid JWT
+- 403 — `PermissionDeniedError` (non-admin on mutating endpoint)
+- 404 — `PaymentMethodNotFoundError`, cross-tenant requests (no info leak), unknown company
+- 409 — `PaymentMethodAlreadyExistsError` (`reason: "duplicate"`), `BuiltinPaymentMethodDeletionError` (`reason: "delete"|"deactivate"`)
+- 422 — Pydantic body / unknown field (`extra="forbid"`)
+- 429 — rate limited
+
+**Invoice integration:** `POST /api/v1/invoices` and `PUT /api/v1/invoices/<id>` accept optional `payment_method_id` (UUID, null clears). Cross-company method reference → 403. Inactive method reference → 409. Response includes `payment_method_id` + `payment_method_label` (snapshot — survives method rename / soft-delete).
+
+**Project integration:** `GET /api/v1/projects/<id>` now exposes `company_id` in the response (gated by `can_read_project()` — only project members see it). Required for FE invoice form to fetch the project's company's payment methods.
+
+**New tables:** `payment_methods`
+**Modified tables:** `invoices` (+ `payment_method_id` FK SET NULL, + `payment_method_label` snapshot column)
+**New BE dependencies:** none
+**New FE dependencies:** none (reuses shadcn/ui Combobox, Card, Dialog, Sonner; new generic `PaymentMethodSelect` component)
+**i18n namespaces added:** `paymentMethods.*` and `invoices.paymentMethod.*` (en / fr / vi parity, 35 keys)

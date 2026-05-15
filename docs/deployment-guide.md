@@ -717,6 +717,20 @@ bug) or egress (>10 GB/mo = something odd).
 - ❌ **Commit-time secrets in repo** — all 20 prod secrets live in Secret
   Manager only; `.env` is rendered on the VM by a systemd unit.
 
+## Release notes — invoice-payment-method (2026-05-15)
+
+- **No new env vars.** `EMAIL_PROVIDER`, JWT keys, DB DSN, Resend creds — all
+  unchanged.
+- **One Alembic migration to apply** before bringing the new BE up:
+  `cea9f050672d_add_payment_methods_and_invoice_columns`. Run
+  `flask db upgrade` from inside the api container. Migration is reversible
+  (`flask db downgrade -1`) and round-tripped on real Postgres.
+- **Migration backfill** seeds `Cash` + `TRIM(legal_name)` payment methods
+  for every existing company in a single transaction; safe to re-run
+  (`ON CONFLICT DO NOTHING`).
+- **No new BE/FE dependencies.** Reuses shadcn/ui Combobox + Card + Dialog
+  primitives, sonner toasts, Flask-Limiter, existing access-repo port.
+
 ---
 
 *This document is the single source of operational truth. PRs that change

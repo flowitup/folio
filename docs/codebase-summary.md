@@ -42,6 +42,7 @@ folio/                                        # umbrella repo (this)
 - **Notes** — per-project shared notes with date-anchored in-app reminders; lazy SQL computation, no background job.
 - **Billing module** — outgoing client-facing devis + facture documents, polymorphic on `kind`, with user-managed templates and per-document PDF export. Distinct from internal expense tracking (`invoices` table, retained under that name pending a future rename to `expenses`).
 - **Companies module** — admin-managed shared `companies` (legal entities) attached to users via single-use invite tokens; replaces the old 1:1 `company_profile`; sensitive fields (SIRET/TVA/IBAN/BIC) masked in UI for non-admins, full on PDF; numbering counters re-keyed per `(company_id, kind, year)`; documents enforce `(company_id, kind, document_number)` uniqueness so each company keeps an independent sequence.
+- **Payment methods module** — per-company CRUD list of invoice payment methods (`Cash` + `legal_name` seeded as builtins; user-added entries supported). Soft-delete via `is_active`. Invoices snapshot the label at write time (`payment_method_label`), so historical invoices survive method rename and soft-delete. Membership-checked read; `*:*` admin write. Single-query list with usage counts via `LEFT JOIN GROUP BY`.
 
 ### Frontend Route Groups
 

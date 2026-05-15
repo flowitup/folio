@@ -1235,6 +1235,40 @@ One revision creates `companies`, `user_company_access`, `company_invite_tokens`
 - 68 new tests (domain entities, use cases, API endpoints, components)
 - All passing
 
+## Payment Methods Module (per-company invoice payment metadata)
+
+Per-company list of selectable payment methods used when recording invoices, with snapshot-on-write to invoices for audit safety.
+
+```
+companies                         payment_methods                  invoices
+─────────                         ───────────────                  ────────
+id ◄────── company_id (CASCADE) ◄─ id                              id
+legal_name                        company_id                       project_id (→ company)
+                                  label                            payment_method_id ── (SET NULL)
+                                  is_builtin   (Cash + legal_name) payment_method_label  (snapshot)
+                                  is_active    (soft-delete)       …
+                                  Partial unique:
+                                    (company_id, lower(label))
+                                    WHERE is_active = true
+```
+
+**Domain model:**
+- Pure entity at `app/domain/payment_methods/payment_method.py`; immutable dataclass with `with_updates(...)` builder.
+- Domain exceptions: `PaymentMethodNotFoundError`, `PaymentMethodAlreadyExistsError`, `BuiltinPaymentMethodDeletionError`, `PaymentMethodNotActiveError`.
+
+**Use-cases (`app/application/payment_methods/`):**
+- `ListPaymentMethodsUseCase` — membership-checked; single-query LEFT JOIN GROUP BY for usage counts.
+- `CreatePaymentMethodUseCase` / `UpdatePaymentMethodUseCase` / `DeletePaymentMethodUseCase` — `*:*` admin only; cross-tenant requests return 404 (no info leak).
+- `SeedPaymentMethodsForCompanyUseCase` — idempotent; called via post-commit hook on `CreateCompanyUseCase`. Failure logs but does NOT roll back company creation.
+
+**Snapshot pattern:** invoice writes load the method via `find_by_id_for_update` (`SELECT … FOR UPDATE`), validate `method.company_id == invoice.project.company_id` AND `is_active`, then snapshot `method.label` into `invoices.payment_method_label`. Subsequent renames or soft-deletes leave the historical invoice's label intact.
+
+**Builtins:** seeded on company create (and backfilled into existing companies via migration `cea9f050672d`): `Cash` + `TRIM(legal_name)`. Built-in methods can be renamed but cannot be deactivated/deleted (409 `reason: deactivate|delete`).
+
+**API endpoints:** 4 (see `docs/checklist/feature-checklist.md` → Payment Methods).
+
+**Tests:** 100% coverage on `app/{domain,application}/payment_methods` + repo + API; cross-tenant + builtin-protect + snapshot-survival explicit cases. Full BE suite: 1489 passing / 0 failing.
+
 ## Unresolved Architectural Decisions
 
 - Session persistence strategy for multi-region deployment
