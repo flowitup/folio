@@ -100,13 +100,14 @@ jobs:
           token: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-tags: true
 
-      - name: Verify version↔sha tag (workflow_dispatch only)
-        # Use the GitHub REST API (via gh) to resolve the tag — avoids the
-        # actions/checkout@v4 ref=<sha> tag-fetch quirk and works with
-        # fine-grained PATs (where git-over-HTTPS auth is finicky).
-        # `repos/.../commits/<ref>` accepts tag names and resolves through
-        # annotated tags to the underlying commit in one call.
-        if: github.event_name == 'workflow_dispatch'
+      - name: Verify version↔sha tag
+        # Resolve the tag via the GitHub REST API and ensure the version in
+        # the payload actually points at the SHA being deployed. Runs on
+        # BOTH triggers: a leaked `repository_dispatch` token could otherwise
+        # invoke a deploy with an attacker-chosen SHA from any internal
+        # branch (the SHA-regex allows any 7-40 hex string, including ones
+        # that never made it to a signed release tag).
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
         env:
           GH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
@@ -121,7 +122,7 @@ jobs:
           if [ "$tag_sha" = "$SHA" ] || [[ "$SHA" == "$tag_sha"* ]] || [[ "$tag_sha" == "$SHA"* ]]; then
             echo "::notice::tag v${VERSION} points at ${SHA} ✓ (resolved $tag_sha)"
           else
-            echo "::error::tag v${VERSION} points at ${tag_sha} but workflow_dispatch was given ${SHA}"
+            echo "::error::tag v${VERSION} points at ${tag_sha} but caller passed ${SHA}"
             exit 1
           fi
 
