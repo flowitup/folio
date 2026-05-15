@@ -164,43 +164,49 @@ jobs:
         # so /opt/folio/ always reflects parent master. Stage in a per-run
         # tempdir to avoid collisions with leftover root-owned files in /tmp
         # from prior provisioning.
+        #
+        # All `${{ ... }}` interpolations are bound into env vars first and
+        # then referenced as shell `$VAR`s. See deploy-backend.yml for the
+        # full rationale.
         env:
           STAGE_DIR: /tmp/folio-deploy-${{ github.run_id }}
         run: |
           set -e
-          gcloud compute ssh ${{ env.VM_NAME }} \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
-            --command="rm -rf '$STAGE_DIR' && mkdir -p '$STAGE_DIR'"
+          gcloud compute ssh "$VM_NAME" \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
+            --command="rm -rf \"$STAGE_DIR\" && mkdir -p \"$STAGE_DIR\""
           gcloud compute scp \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
             scripts/deploy/deploy-runner.sh \
             scripts/deploy/wait-healthy.sh \
             scripts/deploy/rollback.sh \
             docker-compose.yml \
             docker-compose.prod.yml \
-            ${{ env.VM_NAME }}:"$STAGE_DIR/"
-          gcloud compute ssh ${{ env.VM_NAME }} \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
+            "${VM_NAME}:${STAGE_DIR}/"
+          gcloud compute ssh "$VM_NAME" \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
             --command="
               set -e
               sudo mkdir -p /opt/folio/scripts
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/rollback.sh      /opt/folio/scripts/rollback.sh
-              sudo install -o root -g root -m 644 '$STAGE_DIR'/docker-compose.yml      /opt/folio/docker-compose.yml
-              sudo install -o root -g root -m 644 '$STAGE_DIR'/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
-              rm -rf '$STAGE_DIR'
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/rollback.sh      /opt/folio/scripts/rollback.sh
+              sudo install -o root -g root -m 644 \"$STAGE_DIR\"/docker-compose.yml      /opt/folio/docker-compose.yml
+              sudo install -o root -g root -m 644 \"$STAGE_DIR\"/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
+              rm -rf \"$STAGE_DIR\"
               echo 'deploy bundle synced:'
               ls -la /opt/folio/scripts/ /opt/folio/docker-compose*.yml
             "
 
       - name: Deploy on VM (deploy-runner.sh)
+        env:
+          SHA: ${{ steps.input.outputs.sha }}
         run: |
-          gcloud compute ssh ${{ env.VM_NAME }} \
+          gcloud compute ssh "$VM_NAME" \
             --tunnel-through-iap \
-            --zone=${{ env.ZONE }} \
+            --zone="$ZONE" \
             --quiet \
-            --command="sudo /opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} frontend"
+            --command="sudo /opt/folio/scripts/deploy-runner.sh \"$SHA\" frontend"
 
       - name: Purge Cloudflare edge cache
         # Required: /_next/static/* has 1-month edge TTL. Without purge, users

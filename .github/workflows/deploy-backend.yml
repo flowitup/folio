@@ -166,33 +166,40 @@ jobs:
         # so /opt/folio/ always reflects parent master. Stage in a per-run
         # tempdir to avoid collisions with leftover root-owned files in /tmp
         # from prior provisioning.
+        #
+        # All `${{ ... }}` interpolations are bound into env vars first and
+        # then referenced as shell `$VAR`s inside `run:`. This pattern is
+        # GitHub's own recommendation for `--command=` sinks: even if a
+        # future PR adds a new dynamic value (e.g. branch name from the
+        # dispatch payload) the value lands in a shell variable, never
+        # textually concatenated into the workflow template.
         env:
           STAGE_DIR: /tmp/folio-deploy-${{ github.run_id }}
         run: |
           set -e
           # Pre-create the staging dir as the SSH user so scp can write to it.
-          gcloud compute ssh ${{ env.VM_NAME }} \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
-            --command="rm -rf '$STAGE_DIR' && mkdir -p '$STAGE_DIR'"
+          gcloud compute ssh "$VM_NAME" \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
+            --command="rm -rf \"$STAGE_DIR\" && mkdir -p \"$STAGE_DIR\""
           gcloud compute scp \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
             scripts/deploy/deploy-runner.sh \
             scripts/deploy/wait-healthy.sh \
             scripts/deploy/rollback.sh \
             docker-compose.yml \
             docker-compose.prod.yml \
-            ${{ env.VM_NAME }}:"$STAGE_DIR/"
-          gcloud compute ssh ${{ env.VM_NAME }} \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
+            "${VM_NAME}:${STAGE_DIR}/"
+          gcloud compute ssh "$VM_NAME" \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
             --command="
               set -e
               sudo mkdir -p /opt/folio/scripts
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/rollback.sh      /opt/folio/scripts/rollback.sh
-              sudo install -o root -g root -m 644 '$STAGE_DIR'/docker-compose.yml      /opt/folio/docker-compose.yml
-              sudo install -o root -g root -m 644 '$STAGE_DIR'/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
-              rm -rf '$STAGE_DIR'
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/rollback.sh      /opt/folio/scripts/rollback.sh
+              sudo install -o root -g root -m 644 \"$STAGE_DIR\"/docker-compose.yml      /opt/folio/docker-compose.yml
+              sudo install -o root -g root -m 644 \"$STAGE_DIR\"/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
+              rm -rf \"$STAGE_DIR\"
               echo 'deploy bundle synced:'
               ls -la /opt/folio/scripts/ /opt/folio/docker-compose*.yml
             "
@@ -201,12 +208,19 @@ jobs:
         # --quiet suppresses the first-run SSH-key generation prompt (would hang).
         # deploy-runner.sh handles: pull image → flask db upgrade → swap api+worker
         # with --no-deps → wait-healthy.
+        #
+        # SHA is bound via env, then referenced as "$SHA" in the remote
+        # command. The remote shell sees a quoted argument — even if a
+        # future regex widening accidentally allowed shell metachars,
+        # they would land inside the quotes, not as a separate command.
+        env:
+          SHA: ${{ steps.input.outputs.sha }}
         run: |
-          gcloud compute ssh ${{ env.VM_NAME }} \
+          gcloud compute ssh "$VM_NAME" \
             --tunnel-through-iap \
-            --zone=${{ env.ZONE }} \
+            --zone="$ZONE" \
             --quiet \
-            --command="sudo /opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} api"
+            --command="sudo /opt/folio/scripts/deploy-runner.sh \"$SHA\" api"
 
       - name: Smoke /health (assert 200 + JSON shape)
         # Cache-bust via ?_=<epoch> to defeat any accidental CF page rule.
