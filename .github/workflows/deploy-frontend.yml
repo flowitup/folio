@@ -83,13 +83,13 @@ jobs:
           echo "::notice::deploying frontend v$VERSION (sha $SHA)"
 
       - name: Checkout parent (for deploy scripts + compose files)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           persist-credentials: false
           fetch-depth: 1
 
       - name: Checkout folio-front-end at SHA
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ env.SUBMODULE_REPO }}
           ref: ${{ steps.input.outputs.sha }}
@@ -126,22 +126,22 @@ jobs:
           fi
 
       - id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f  # v2.1.7
         with:
           # Workload Identity Federation — keyless auth via GitHub OIDC token.
           # Org policy `iam.disableServiceAccountKeyCreation` blocks JSON keys.
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SA_EMAIL }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@77e7a554d41e2ee56fc945c52dfd3f33d12def9a  # v2.1.4
 
       - name: Configure docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
 
       - name: Build + push frontend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355  # v6.10.0
         with:
           context: ./src-fe
           push: true
@@ -269,7 +269,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout parent (with write credentials)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           persist-credentials: true
           fetch-depth: 0
