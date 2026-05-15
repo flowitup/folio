@@ -115,7 +115,7 @@ Operations** before any deploy. Read **Incidents** before any 3 AM page.
 
 | SA | Project roles | Bucket / SA roles | Keys | Notes |
 |---|---|---|---|---|
-| `deploy-sa@…` | `artifactregistry.writer`, `iap.tunnelResourceAccessor`, `compute.osLogin` | — | 1 JSON key in GitHub `GCP_SA_KEY` | CI only |
+| `deploy-sa@…` | `artifactregistry.writer`, `iap.tunnelResourceAccessor`, `compute.osLogin` | — | None — CI auths via Workload Identity Federation (OIDC). Org policy `iam.disableServiceAccountKeyCreation` blocks JSON key creation. | CI only |
 | `vm-runtime-sa@…` | `artifactregistry.reader`, `logging.logWriter`, `monitoring.metricWriter` | per-secret `secretmanager.secretAccessor` (×20), `iam.serviceAccountTokenCreator` on backup-sa, `storage.objectViewer` on primary backup bucket | None — VM-attached metadata server | Default ADC on VM |
 | `backup-sa@…` | — | `storage.objectCreator` + `storage.objectViewer` (primary), `storage.objectCreator` (archive) | 1 GCS HMAC pair in SM | Append-only writer; impersonated by vm-runtime-sa |
 
