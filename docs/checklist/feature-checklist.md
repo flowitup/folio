@@ -249,3 +249,39 @@ Auth for all routes: `@jwt_required()`. Admin-only endpoints require `*:*` permi
 **New BE dependencies:** none
 **New FE dependencies:** none (reuses shadcn/ui Combobox, Card, Dialog, Sonner; new generic `PaymentMethodSelect` component)
 **i18n namespaces added:** `paymentMethods.*` and `invoices.paymentMethod.*` (en / fr / vi parity, 35 keys)
+
+## Project Documents (per-project file storage)
+
+| Method | Path | Notes | Auth | Rate limit |
+|---|---|---|---|---|
+| GET | `/api/v1/projects/<pid>/documents?type=&uploader_id=&sort=&order=&page=&per_page=` | Paginated list with filter/sort; `type` is repeatable; `page≤10000`, `per_page≤100` | jwt + project member | — |
+| POST | `/api/v1/projects/<pid>/documents` | Multipart `file` upload; soft-deleted priors don't free filename — UUID storage key prevents collisions | jwt + project member | **30/min/user** |
+| GET | `/api/v1/projects/<pid>/documents/<id>/download` | Streams via `send_file`; inline for PDF + `image/*`, attachment otherwise; `nosniff` + CSP `sandbox` headers; cross-project URL guard at use-case (404 on mismatch) | jwt + project member | — |
+| DELETE | `/api/v1/projects/<pid>/documents/<id>` | Soft-delete (sets `deleted_at`); MinIO object retained | jwt + (uploader OR project owner OR `*:*`) | — |
+
+**Total: 4 endpoints** across 1 blueprint (`project_documents_bp`).
+
+**Error → HTTP mapping:**
+- 400 — `MISSING_FILE` (no `file` part / empty filename / zero-byte file)
+- 403 — `DocumentPermissionDeniedError` (non-uploader, non-admin, non-owner on delete); also 403 from `@require_project_access` (non-member)
+- 404 — `ProjectDocumentNotFoundError` (missing OR soft-deleted OR cross-project)
+- 413 — `DocumentFileTooLargeError` (size > `PROJECT_DOCUMENT_MAX_SIZE_BYTES`, default 25 MB; Flask `MAX_CONTENT_LENGTH` set to 26 MiB)
+- 415 — `UnsupportedDocumentTypeError` (extension not in allowlist OR mime mismatch for non-DWG types)
+- 422 — Pydantic query params (invalid `sort`/`order`/`type`/`per_page>100`/`page>10000`)
+- 429 — rate limit (30/min/user on POST)
+
+**New tables:** `project_documents` (id, project_id FK→projects ON DELETE CASCADE, uploader_user_id FK→users ON DELETE RESTRICT, filename, content_type, size_bytes CHECK ≥ 0, storage_key UNIQUE, created_at, deleted_at)
+**Migrations:** `818ba2f5ef63 add project_documents table` + merge `fe343de24e08 merge project_documents and payment_methods heads`
+**Partial indexes** (filter `WHERE deleted_at IS NULL`):
+- `ix_project_documents_project_id_created_at` on `(project_id, created_at DESC)` — default sort
+- `ix_project_documents_uploader_user_id` on `(uploader_user_id)` — uploader filter
+
+**New BE port:** `IDocumentStorage(Protocol)` (structurally identical to `IAttachmentStorage`; bound to the same `S3AttachmentStorage` singleton in `wiring.py`).
+**New BE adapter:** `InMemoryDocumentStorage` (test-only; alongside `InMemoryEmailAdapter`).
+**New BE dependencies:** none.
+**New FE dependencies:** none (hand-rolled HTML5 drag-zone; no react-dropzone or react-pdf — `<embed>` for PDF, `<img>` for image, fallback download for others).
+**New FE helpers:** `lib/api/project-document-blob.ts` (Bearer-via-blob fetch helper), `lib/api/refresh.ts` (shared cookie refresh).
+**i18n namespaces added:** `navigation.documents` + `documents.*` (54 leaf keys in en / fr / vi parity).
+**Sidebar entry:** `Documents` after `Notes`, before `Billing`. Lucide icon: `FileText`.
+
+**Security notes:** filename sanitation via `werkzeug.utils.secure_filename` + empty-after-sanitation guard. Extension AND MIME allowlist (DWG by extension only). Storage key uses document UUID — no collision possible across users. Cross-project IDOR guard at 3 layers (decorator project-exists + member check; use-case `doc.project_id == expected_project_id`; route would also catch UUID mismatch). `Content-Security-Policy: default-src 'none'; sandbox` + `X-Content-Type-Options: nosniff` on every `/download` response. Inline-disposition only for PDF + `image/*`; everything else forced to attachment.

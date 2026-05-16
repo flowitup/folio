@@ -158,6 +158,31 @@ Members of a project can capture notes with a due date and a lead time. When the
 - Per-note assignees
 - Per-user timezone column
 
+## 8b. Project Documents (per-project file storage)
+
+URL: `/{locale}/projects/:id/documents`
+
+Sidebar entry "Documents" appears after Notes when a project is selected. Project members upload, list, preview, download, and soft-delete files attached to the project (plans, contracts, photos, invoice receipts, etc.). Stored on the existing MinIO bucket via the `project-documents/` key prefix.
+
+**Capabilities**
+- Drag-and-drop upload zone + `Pick files` button — multi-file via N parallel `XMLHttpRequest` POSTs with per-file progress bar (XHR `upload.onprogress`)
+- File-type allowlist: PDF, PNG / JPG / WebP, DOCX, XLSX, DWG, TXT — 25 MB cap per file (env `PROJECT_DOCUMENT_MAX_SIZE_BYTES`)
+- Table with sortable columns: File name, Type, Size, Uploaded by, Uploaded date — pagination (page size 25, max 100)
+- Filter chips for type (All / PDF / Image / Spreadsheet / Document / CAD / Text / Other) + uploader `<Select>`
+- Inline preview dialog: `<embed>` for PDF, `<img>` for images, fallback "Download to view" for other types. Authenticated via blob-fetch with Bearer JWT (native `<embed src>` can't send headers).
+- Per-row download button (also authenticated via blob-fetch + transient `<a>` click).
+- Soft-delete with confirm dialog — uploader OR project owner OR `*:*` admin only.
+- Rate-limited: 30 uploads / minute / user (Flask-Limiter, keyed by JWT identity).
+
+**Out of scope (v1, tracked as follow-ups)**
+- OCR / full-text search
+- Virus / malware scan
+- Server-side preview-conversion (DOCX / XLSX / DWG → PDF preview)
+- Bulk-zip download
+- Versioning / replace-in-place
+- MinIO janitor for soft-deleted rows (objects retained indefinitely)
+- UI to recover soft-deleted documents
+
 ## 9. Settings
 
 URL: `/{locale}/settings`

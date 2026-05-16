@@ -167,13 +167,16 @@ Operations** before any deploy. Read **Incidents** before any 3 AM page.
 ### Constants in code (NOT in Secret Manager)
 
 ```
-S3_ENDPOINT_URL=http://minio:9000          # docker network internal
+S3_ENDPOINT_URL=http://minio:9000              # docker network internal
 S3_REGION=us-east-1
 EMAIL_PROVIDER=resend
 API_INTERNAL_BASE_URL=http://api:5000/api/v1
 FLASK_DEBUG=false
 NODE_ENV=production
+PROJECT_DOCUMENT_MAX_SIZE_BYTES=26214400        # optional, default 25 MB
 ```
+
+> **Project Documents storage:** reuses the existing MinIO bucket. NO new bucket. Files namespaced under `project-documents/{project_id}/{document_id}/{secure_filename}`. Flask `MAX_CONTENT_LENGTH` is 26 MiB in `app/__init__.py` so the multipart envelope fits comfortably above the 25 MB use-case cap.
 
 ### Secret Manager keys consumed by VM
 

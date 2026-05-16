@@ -1269,6 +1269,94 @@ legal_name                        company_id                       project_id (�
 
 **Tests:** 100% coverage on `app/{domain,application}/payment_methods` + repo + API; cross-tenant + builtin-protect + snapshot-survival explicit cases. Full BE suite: 1489 passing / 0 failing.
 
+## Project Documents Module (per-project file storage)
+
+Per-project Documents section enabling members to upload, list, preview, download, and soft-delete arbitrary files (plans, contracts, photos, invoice receipts, etc.).
+
+**Storage:** reuses the existing MinIO bucket (no new infra). New `IDocumentStorage(Protocol)` port bound to the same `S3AttachmentStorage` singleton instance as `attachment_storage` in `wiring.py` — distinct key prefix `project-documents/{project_id}/{document_id}/{secure_filename}`. Bounded-context boundaries preserved (no cross-BC import).
+
+**Data flow:**
+
+```
+Browser            Next.js                Flask BE              MinIO
+   │                  │                       │                   │
+   │ POST multipart   │                       │                   │
+   ├─────────────────►│                       │                   │
+   │                  │ POST (Bearer + CSRF)  │                   │
+   │                  ├──────────────────────►│                   │
+   │                  │                       │ stream → put()    │
+   │                  │                       ├──────────────────►│
+   │                  │                       │◄──────────────────┤
+   │                  │                       │ ON DB commit OK   │
+   │                  │                       │ — orphan-cleanup  │
+   │                  │                       │   on commit fail  │
+   │                  │ 201 ProjectDocument   │                   │
+   │ 201              │◄──────────────────────┤                   │
+   │◄─────────────────┤                       │                   │
+
+Browser preview/download (Bearer-via-blob):
+   Browser              Flask BE             MinIO
+   │ fetch(`/download`)  │                    │
+   │   + Authorization   │                    │
+   ├────────────────────►│                    │
+   │                     │ get_stream()       │
+   │                     ├───────────────────►│
+   │                     │◄───────────────────┤
+   │ 200 + nosniff +     │                    │
+   │ CSP sandbox +       │                    │
+   │ Content-Disposition │                    │
+   │◄────────────────────┤                    │
+   │                                          │
+   │ URL.createObjectURL(blob) → <embed src>  │
+```
+
+**Use-cases:**
+- `UploadProjectDocumentUseCase` — `secure_filename` + extension/MIME allowlist + size cap + storage put + DB save + orphan-cleanup on commit failure.
+- `ListProjectDocumentsUseCase` — pure pass-through to repository (filter/sort/paginate).
+- `GetProjectDocumentUseCase` — find by id + soft-delete guard + **cross-project guard** + storage `get_stream`. Cross-project guard inside the use-case (review H1) prevents S3 stream leak on attacker probes.
+- `DeleteProjectDocumentUseCase` — soft-delete only (`UPDATE ... WHERE deleted_at IS NULL`); permission gate: `uploader_id == requester OR can_mutate_project OR is_admin`.
+
+**Endpoints:**
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/api/v1/projects/<pid>/documents` | `project:read` + project member | filters: `type` (repeatable), `uploader_id`; sort: `name\|size\|created_at\|uploader`; paginate `page` (≤10000) + `per_page` (1–100) |
+| POST | `/api/v1/projects/<pid>/documents` | `project:read` + project member | multipart `file`; **rate-limited 30/min/user**; size cap 25 MB (`PROJECT_DOCUMENT_MAX_SIZE_BYTES`); ext+MIME allowlist (DWG by ext only) |
+| GET | `/api/v1/projects/<pid>/documents/<id>/download` | `project:read` + project member | streams via `send_file`; `Content-Disposition: inline` for PDF + `image/*`, attachment otherwise; `X-Content-Type-Options: nosniff` + `Content-Security-Policy: default-src 'none'; sandbox`; cross-project guard at use-case |
+| DELETE | `/api/v1/projects/<pid>/documents/<id>` | uploader OR project owner OR `*:*` | soft-delete (sets `deleted_at`); MinIO object retained |
+
+**Soft-delete invariant:** table `project_documents` has `deleted_at TIMESTAMPTZ NULL`. All list/find paths filter `WHERE deleted_at IS NULL`. Two partial indexes (`postgresql_where=deleted_at IS NULL`):
+- `ix_project_documents_project_id_created_at` on `(project_id, created_at DESC)` — default sort + project-scoped list.
+- `ix_project_documents_uploader_user_id` — uploader filter.
+
+MinIO object NOT removed on soft-delete. Out-of-scope follow-up: janitor that purges objects after N days for rows where `deleted_at < now() - interval N`.
+
+**Permission model:**
+- All four routes use `@require_permission("project:read") + @require_project_access(write=False)` (any project member).
+- Delete adds inline check inside the use-case: `doc.uploader_user_id == requester OR project.owner_id == requester OR is_admin (has *:*)`. Non-uploader/non-admin members get `DocumentPermissionDeniedError` → 403.
+- Cross-project IDOR guards at THREE layers (decorator validates project exists + caller is member; use-case checks `doc.project_id == expected_project_id` before opening storage stream; route would refuse on UUID mismatch even pre-fix).
+
+**Auth model on the FE side (Bearer-via-blob):**
+
+Native `<embed src>`, `<img src>`, and `<a download>` cannot attach the `Authorization: Bearer <jwt>` header the BE requires. The `lib/api/project-document-blob.ts` helper:
+1. `fetch()` with `Authorization: Bearer + X-CSRF-TOKEN`, `credentials: include`.
+2. If 401, calls `refreshAccessTokenViaCookie()` (uses the `csrf_refresh_token` cookie) and retries once.
+3. `URL.createObjectURL(blob)` returns a same-origin `blob:` URL.
+4. The preview dialog sets THAT as `<embed src>` / `<img src>`. Per-row download uses transient `<a>` + click + `URL.revokeObjectURL` after 1s.
+5. Cleanup on unmount.
+
+Shared helper at `lib/api/refresh.ts` is also used by `documents-upload.tsx` to bootstrap the in-memory token before the upload XHR fires (fresh-page upload would otherwise 401).
+
+**File validation:**
+- Extension allowlist: `.pdf, .png, .jpg, .jpeg, .webp, .docx, .xlsx, .dwg, .txt`.
+- MIME allowlist: standard PDF/image/Office MIMEs PLUS multiple DWG MIMEs (DWG is unstable across browsers). For `.dwg`, the MIME is NOT checked — extension-only accept (security argument: storage key is UUID-scoped, MIME header is user-controlled anyway). For other extensions, MIME OR `application/octet-stream` accepted.
+- Filename sanitation: `werkzeug.utils.secure_filename` strips `..`, `/`, `\`, control chars, NUL bytes, Unicode normalization. Empty-after-sanitation raises `UnsupportedDocumentTypeError` → 400. Original filename preserved in DB (`filename` column) for display + `Content-Disposition`. Sanitized form used for storage key only.
+- Size cap: 25 MB use-case-level (configurable via `PROJECT_DOCUMENT_MAX_SIZE_BYTES`, default 26_214_400). Flask `MAX_CONTENT_LENGTH` raised to 26 MiB to fit multipart envelope (review C1 — was 10 MiB, breaching the advertised 25 MB).
+
+**Tests:** 123 new tests; coverage ≥ 99 % on new BE modules (100 % on use-cases/ports/dtos/domain/repo/in-memory-storage; 97 % on routes). Full BE suite: 1618 pass / 20 skip. FE: 1077 vitest tests. Permission matrix exhaustive (non-member, member-non-uploader, uploader, owner, admin × each verb). Adversarial: cross-project, soft-delete races, orphan cleanup on commit failure, rate-limit, path traversal, Unicode/control-char filenames.
+
+**Out of scope (tracked):** OCR, virus/malware scan, server-side preview-conversion (DOCX/XLSX/DWG → PDF), bulk-zip download, versioning, MinIO janitor for soft-deleted rows, UI to recover soft-deleted documents.
+
 ## Unresolved Architectural Decisions
 
 - Session persistence strategy for multi-region deployment
