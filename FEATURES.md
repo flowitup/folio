@@ -92,7 +92,7 @@ Security:
 
 URL: `/{locale}/projects/{projectId}/invoices`
 
-Invoice list filtered by tabs (All / Client / Labor / Supplier) with a `+ New Invoice` button. Empty state shows "No invoices yet".
+Invoice list filtered by tabs (All / Client / Labor / Supplier) with a `+ New Invoice` button. Columns: Invoice #, Type, Issue date, Recipient, **Payment method** (stamp/tag from the per-invoice snapshot; built-in "Cash" localised per locale; em-dash when blank), Total, Actions. Empty state shows "No invoices yet".
 
 Screenshot: `screenshots/invoices-list.jpg`
 
