@@ -15,6 +15,26 @@ Live: https://folio.flowitup.com
 
 ---
 
+## Local development
+
+The base `docker-compose.yml` requires every secret-bearing variable
+(`${VAR:?required}`) so an accidental `docker compose up` on the VM cannot
+boot prod with development defaults. For local dev, layer the dev overlay
+which fills in safe-for-dev values:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+Production on the VM uses the prod overlay (values come from
+`/opt/folio/.env`, rendered from Secret Manager):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+---
+
 ## Deploys
 
 Both backend and frontend deploy automatically when a new version tag is

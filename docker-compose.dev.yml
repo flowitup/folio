@@ -1,0 +1,52 @@
+# Development override — applied on top of docker-compose.yml.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Why this file exists:
+#   The base docker-compose.yml requires every secret-bearing var via
+#   `${VAR:?required}` so production cannot accidentally boot with known
+#   credentials. Local development still needs sensible defaults to run
+#   `docker compose up` without a hand-crafted .env. Those dev-only defaults
+#   live here.
+#
+# Never use these values in production. The prod overlay
+# (docker-compose.prod.yml) supplies real values from /opt/folio/.env which is
+# rendered from Secret Manager.
+
+services:
+  api:
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-construction}:${POSTGRES_PASSWORD:-construction}@db:5432/${POSTGRES_DB:-construction}
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-smtp}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-minioadmin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
+      - S3_BUCKET=${S3_BUCKET:-construction-attachments}
+      - S3_REGION=${S3_REGION:-us-east-1}
+
+  worker:
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-construction}:${POSTGRES_PASSWORD:-construction}@db:5432/${POSTGRES_DB:-construction}
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-smtp}
+
+  db:
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-construction}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-construction}
+      - POSTGRES_DB=${POSTGRES_DB:-construction}
+
+  minio:
+    environment:
+      - MINIO_ROOT_USER=${S3_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:-minioadmin}
+
+  frontend:
+    build:
+      args:
+        - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:5000/api/v1}
+    environment:
+      - API_INTERNAL_BASE_URL=${API_INTERNAL_BASE_URL:-http://api:5000/api/v1}

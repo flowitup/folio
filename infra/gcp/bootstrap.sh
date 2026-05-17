@@ -7,7 +7,6 @@
 #   BILLING_ACCOUNT=XXXXXX-XXXXXX-XXXXXX ./infra/gcp/bootstrap.sh
 #
 # Optional flags:
-#   --rotate-deploy-key   Mint a new JSON key for deploy-sa (paste into GitHub secret GCP_SA_KEY).
 #   --rotate-hmac         Mint new GCS HMAC keys for backup-sa (paste into Secret Manager in phase 6).
 #
 # Optional env overrides:
@@ -24,11 +23,20 @@ AR_REPO="folio"
 PRIMARY_BUCKET="${PROJECT_ID}-backups"
 ARCHIVE_BUCKET="${PROJECT_ID}-backups-archive"
 
-ROTATE_DEPLOY_KEY=0
 ROTATE_HMAC=0
 for arg in "$@"; do
   case "$arg" in
-    --rotate-deploy-key) ROTATE_DEPLOY_KEY=1 ;;
+    --rotate-deploy-key)
+      # CI now authenticates to GCP via Workload Identity Federation (OIDC).
+      # JSON service account keys are blocked at the org level
+      # (iam.disableServiceAccountKeyCreation, enforced below). Long-lived keys
+      # are exfil-once-use-forever credentials with no IP binding or expiry;
+      # WIF tokens are short-lived and bound to the GitHub workflow's OIDC
+      # identity. The rotation path is intentionally removed.
+      echo "[bootstrap] --rotate-deploy-key is no longer supported." >&2
+      echo "[bootstrap] WIF is the only auth path for CI -> GCP. See docs/deployment-guide.md." >&2
+      exit 2
+      ;;
     --rotate-hmac)       ROTATE_HMAC=1 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -166,18 +174,15 @@ gcloud iam service-accounts add-iam-policy-binding "$(sa backup-sa)" \
   --member="serviceAccount:$(sa vm-runtime-sa)" \
   --role=roles/iam.serviceAccountTokenCreator >/dev/null
 
-# 10. (Optional) deploy-sa JSON key — only when explicitly rotating.
-# Written to a tempdir (mode 700) to keep it out of the worktree if the operator
-# runs `git add .` by reflex.
-if [[ "$ROTATE_DEPLOY_KEY" -eq 1 ]]; then
-  keydir="$(mktemp -d -t deploy-sa-key.XXXXXX)"
-  chmod 700 "$keydir"
-  out="$keydir/deploy-sa-key.json"
-  gcloud iam service-accounts keys create "$out" --iam-account="$(sa deploy-sa)"
-  log "key written to: $out"
-  log "  -> paste contents into GitHub repo secret GCP_SA_KEY"
-  log "  -> then: shred -u '$out' && rmdir '$keydir'  (or rm -P on macOS)"
-fi
+# 10. Enforce: SA keys are blocked org-wide.
+# Closes the long-lived-JSON-key attack surface entirely. If a compromised
+# action or a future operator tries `gcloud iam service-accounts keys create`,
+# the API call is rejected. Idempotent — re-running on an already-enforced
+# project is a noop.
+log "enforcing org policy: iam.disableServiceAccountKeyCreation"
+gcloud resource-manager org-policies enable-enforce \
+  iam.disableServiceAccountKeyCreation --project="$PROJECT_ID" >/dev/null 2>&1 || \
+  log "WARN: could not enforce iam.disableServiceAccountKeyCreation (already enforced, or insufficient permissions). Verify in console."
 
 # 11. (Optional) GCS HMAC keys for backup-sa (mc/MinIO mirror) — paste into SM in phase 6
 if [[ "$ROTATE_HMAC" -eq 1 ]]; then

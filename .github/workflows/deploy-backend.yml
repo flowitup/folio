@@ -7,7 +7,15 @@
 #
 # Flow: checkout submodule@<sha> → buildx → push to AR (tag <sha> + latest)
 #   → gcloud IAP SSH → /opt/folio/scripts/deploy-runner.sh <sha> api
-#   → smoke /health → commit submodule pointer bump on master.
+#   → smoke /health → (separate job) commit submodule pointer bump on master.
+#
+# Permission model: the build job runs untrusted submodule source (post-install
+# hooks, malicious Python wheels) inside docker buildx. It must NOT hold a
+# token that can write to parent master. The build job's GITHUB_TOKEN is
+# `contents: read` only. A separate bump-pointer job, gated by `needs: build`,
+# holds `contents: write` and runs only after build+smoke succeed — its only
+# step is the gitlink commit, so there's no untrusted code path that touches
+# the write-scoped token.
 #
 # Plan: plans/260503-0913-parent-auto-deploy-on-version-bump/phase-01-...md
 # Runbook: docs/deployment-guide.md §3.1, §4.1
@@ -32,10 +40,6 @@ concurrency:
   group: deploy-prod-backend
   cancel-in-progress: false
 
-permissions:
-  contents: write   # commit submodule pointer bump back to parent master
-  id-token: write   # required for Workload Identity Federation OIDC token
-
 env:
   PROJECT_ID: flowitup-folio-prod
   REGION: europe-west1
@@ -48,9 +52,20 @@ env:
   SUBMODULE_PATH: folio-back-end
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Default-narrow: read-only on parent contents. The build step pulls
+    # submodule source at an attacker-controlled SHA and runs it through
+    # docker buildx; a build-time exfil of GITHUB_TOKEN therefore cannot
+    # push to parent master. `id-token: write` is required by WIF (the OIDC
+    # token is bound to this workflow run, not to repo contents).
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      sha: ${{ steps.input.outputs.sha }}
+      version: ${{ steps.input.outputs.version }}
     steps:
       - name: Resolve inputs (dispatch vs manual)
         id: input
@@ -68,14 +83,16 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "::notice::deploying api v$VERSION (sha $SHA)"
 
-      - name: Checkout parent (for pointer commit)
-        uses: actions/checkout@v4
+      - name: Checkout parent (for deploy scripts + compose files)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
-          persist-credentials: true
-          fetch-depth: 0
+          # Build job is contents:read — no need to persist credentials in
+          # the worktree (eliminates one exfil vector).
+          persist-credentials: false
+          fetch-depth: 1
 
       - name: Checkout folio-back-end at SHA
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ env.SUBMODULE_REPO }}
           ref: ${{ steps.input.outputs.sha }}
@@ -87,13 +104,14 @@ jobs:
           # Fetch tags so the version<->sha verify step can check tag points-at.
           fetch-tags: true
 
-      - name: Verify version↔sha tag (workflow_dispatch only)
-        # Use the GitHub REST API (via gh) to resolve the tag — avoids the
-        # actions/checkout@v4 ref=<sha> tag-fetch quirk and works with
-        # fine-grained PATs (where git-over-HTTPS auth is finicky).
-        # `repos/.../commits/<ref>` accepts tag names and resolves through
-        # annotated tags to the underlying commit in one call.
-        if: github.event_name == 'workflow_dispatch'
+      - name: Verify version↔sha tag
+        # Resolve the tag via the GitHub REST API and ensure the version in
+        # the payload actually points at the SHA being deployed. Runs on
+        # BOTH triggers: a leaked `repository_dispatch` token could otherwise
+        # invoke a deploy with an attacker-chosen SHA from any internal
+        # branch (the SHA-regex allows any 7-40 hex string, including ones
+        # that never made it to a signed release tag).
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
         env:
           GH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
@@ -108,27 +126,27 @@ jobs:
           if [ "$tag_sha" = "$SHA" ] || [[ "$SHA" == "$tag_sha"* ]] || [[ "$tag_sha" == "$SHA"* ]]; then
             echo "::notice::tag v${VERSION} points at ${SHA} ✓ (resolved $tag_sha)"
           else
-            echo "::error::tag v${VERSION} points at ${tag_sha} but workflow_dispatch was given ${SHA}"
+            echo "::error::tag v${VERSION} points at ${tag_sha} but caller passed ${SHA}"
             exit 1
           fi
 
       - id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f  # v2.1.7
         with:
           # Workload Identity Federation — keyless auth via GitHub OIDC token.
           # Org policy `iam.disableServiceAccountKeyCreation` blocks JSON keys.
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SA_EMAIL }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@77e7a554d41e2ee56fc945c52dfd3f33d12def9a  # v2.1.4
 
       - name: Configure docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
 
       - name: Build + push api image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355  # v6.10.0
         with:
           context: ./src-be
           push: true
@@ -148,33 +166,40 @@ jobs:
         # so /opt/folio/ always reflects parent master. Stage in a per-run
         # tempdir to avoid collisions with leftover root-owned files in /tmp
         # from prior provisioning.
+        #
+        # All `${{ ... }}` interpolations are bound into env vars first and
+        # then referenced as shell `$VAR`s inside `run:`. This pattern is
+        # GitHub's own recommendation for `--command=` sinks: even if a
+        # future PR adds a new dynamic value (e.g. branch name from the
+        # dispatch payload) the value lands in a shell variable, never
+        # textually concatenated into the workflow template.
         env:
           STAGE_DIR: /tmp/folio-deploy-${{ github.run_id }}
         run: |
           set -e
           # Pre-create the staging dir as the SSH user so scp can write to it.
-          gcloud compute ssh ${{ env.VM_NAME }} \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
-            --command="rm -rf '$STAGE_DIR' && mkdir -p '$STAGE_DIR'"
+          gcloud compute ssh "$VM_NAME" \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
+            --command="rm -rf \"$STAGE_DIR\" && mkdir -p \"$STAGE_DIR\""
           gcloud compute scp \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
             scripts/deploy/deploy-runner.sh \
             scripts/deploy/wait-healthy.sh \
             scripts/deploy/rollback.sh \
             docker-compose.yml \
             docker-compose.prod.yml \
-            ${{ env.VM_NAME }}:"$STAGE_DIR/"
-          gcloud compute ssh ${{ env.VM_NAME }} \
-            --tunnel-through-iap --zone=${{ env.ZONE }} --quiet \
+            "${VM_NAME}:${STAGE_DIR}/"
+          gcloud compute ssh "$VM_NAME" \
+            --tunnel-through-iap --zone="$ZONE" --quiet \
             --command="
               set -e
               sudo mkdir -p /opt/folio/scripts
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
-              sudo install -o root -g root -m 755 '$STAGE_DIR'/rollback.sh      /opt/folio/scripts/rollback.sh
-              sudo install -o root -g root -m 644 '$STAGE_DIR'/docker-compose.yml      /opt/folio/docker-compose.yml
-              sudo install -o root -g root -m 644 '$STAGE_DIR'/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
-              rm -rf '$STAGE_DIR'
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
+              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/rollback.sh      /opt/folio/scripts/rollback.sh
+              sudo install -o root -g root -m 644 \"$STAGE_DIR\"/docker-compose.yml      /opt/folio/docker-compose.yml
+              sudo install -o root -g root -m 644 \"$STAGE_DIR\"/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
+              rm -rf \"$STAGE_DIR\"
               echo 'deploy bundle synced:'
               ls -la /opt/folio/scripts/ /opt/folio/docker-compose*.yml
             "
@@ -183,12 +208,19 @@ jobs:
         # --quiet suppresses the first-run SSH-key generation prompt (would hang).
         # deploy-runner.sh handles: pull image → flask db upgrade → swap api+worker
         # with --no-deps → wait-healthy.
+        #
+        # SHA is bound via env, then referenced as "$SHA" in the remote
+        # command. The remote shell sees a quoted argument — even if a
+        # future regex widening accidentally allowed shell metachars,
+        # they would land inside the quotes, not as a separate command.
+        env:
+          SHA: ${{ steps.input.outputs.sha }}
         run: |
-          gcloud compute ssh ${{ env.VM_NAME }} \
+          gcloud compute ssh "$VM_NAME" \
             --tunnel-through-iap \
-            --zone=${{ env.ZONE }} \
+            --zone="$ZONE" \
             --quiet \
-            --command="sudo /opt/folio/scripts/deploy-runner.sh ${{ steps.input.outputs.sha }} api"
+            --command="sudo /opt/folio/scripts/deploy-runner.sh \"$SHA\" api"
 
       - name: Smoke /health (assert 200 + JSON shape)
         # Cache-bust via ?_=<epoch> to defeat any accidental CF page rule.
@@ -210,23 +242,65 @@ jobs:
           echo "::error::smoke failed — /health did not return 200 with healthy JSON after 5 tries"
           exit 1
 
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::API deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
+          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy Backend — build"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Version | v${{ steps.input.outputs.version }} |"
+            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
+            echo "| Trigger | ${{ github.event_name }} |"
+            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bump-pointer:
+    # Runs ONLY after build+smoke succeed. Its sole task is to write the
+    # submodule pointer commit back to parent master — so the `contents:write`
+    # token is held by a job that contains no untrusted-code path. The build
+    # job's potentially-malicious docker-build step has already completed and
+    # released its (read-only) token before this job starts.
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout parent (with write credentials)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
       - name: Bump folio-back-end pointer in parent master
         # Writes the gitlink directly via update-index (no second clone needed,
         # so no cross-repo auth dance for the submodule remote). On race with
         # a human master push, retry fetch+rebase+push up to 3x with backoff.
+        env:
+          SHA: ${{ needs.build.outputs.sha }}
+          VERSION: ${{ needs.build.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -e
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git update-index --add --cacheinfo 160000,${{ steps.input.outputs.sha }},${{ env.SUBMODULE_PATH }}
+          git update-index --add --cacheinfo "160000,${SHA},${SUBMODULE_PATH}"
           if git diff --cached --quiet; then
-            echo "submodule pointer already at ${{ steps.input.outputs.sha }} — nothing to commit"
+            echo "submodule pointer already at ${SHA} — nothing to commit"
             exit 0
           fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            commit_msg="chore(deploy): folio-back-end → ${{ steps.input.outputs.sha }} [manual] [skip ci]"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            commit_msg="chore(deploy): folio-back-end → ${SHA} [manual] [skip ci]"
           else
-            commit_msg="chore(deploy): folio-back-end → ${{ steps.input.outputs.sha }} (v${{ steps.input.outputs.version }}) [skip ci]"
+            commit_msg="chore(deploy): folio-back-end → ${SHA} (v${VERSION}) [skip ci]"
           fi
           git commit -m "$commit_msg"
           for i in 1 2 3; do
@@ -245,23 +319,3 @@ jobs:
           done
           echo "::error::failed to push pointer commit after 3 retries — deploy is live, parent master is stale"
           exit 1
-
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "::error::API deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
-          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "## Deploy Backend"
-            echo ""
-            echo "| Field | Value |"
-            echo "|---|---|"
-            echo "| Version | v${{ steps.input.outputs.version }} |"
-            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
-            echo "| Trigger | ${{ github.event_name }} |"
-            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
-          } >> "$GITHUB_STEP_SUMMARY"

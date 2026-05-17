@@ -1,0 +1,19 @@
+# Dependabot for GitHub Actions used in parent workflows.
+#
+# Every `uses:` in .github/workflows/ is pinned to a 40-char SHA (tag pins
+# are mutable — a compromised publisher can retag v4/v2 to a malicious SHA).
+# Dependabot opens PRs that bump the SHA pin AND update the `# vX.Y.Z`
+# trailing comment, so reviewers can verify against the action's release.
+#
+# Only `package-ecosystem: github-actions` is configured here. Submodule
+# repos (folio-back-end, folio-front-end) own their own language dependency
+# updates.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(ci)
