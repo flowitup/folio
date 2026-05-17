@@ -177,6 +177,19 @@ PROJECT_DOCUMENT_MAX_SIZE_BYTES=26214400        # optional, default 25 MB
 ```
 
 > **Project Documents storage:** reuses the existing MinIO bucket. NO new bucket. Files namespaced under `project-documents/{project_id}/{document_id}/{secure_filename}`. Flask `MAX_CONTENT_LENGTH` is 26 MiB in `app/__init__.py` so the multipart envelope fits comfortably above the 25 MB use-case cap.
+>
+> **Janitor for soft-deleted documents:** soft-delete marks `deleted_at` but the MinIO object is kept indefinitely. Operators reclaim space by running the retention janitor periodically (cron / RQ scheduler, configured at deployment):
+>
+> ```
+> # Dry-run — count candidates, no writes
+> uv run python scripts/purge_soft_deleted_documents.py --retention-days 90 --dry-run
+> # Real run — purges up to --batch-size rows; re-run until "purged 0"
+> uv run python scripts/purge_soft_deleted_documents.py --retention-days 90
+> ```
+>
+> Refuses `--retention-days <= 0` (no immediate-purge foot-gun). Exit code 0 on success, 1 on bad args, 2 if every candidate failed (treat as ops alert). Storage delete first, then DB hard-delete — re-runnable on partial failure since S3 deletes are idempotent.
+>
+> **CSP for PDF preview:** `next.config.ts` sets `object-src 'blob:'` so the preview dialog's `<embed src={blob:...}>` works even after the CSP is promoted from Report-Only to enforce mode. `<img>` previews use `img-src` (already allows `blob:`) — unaffected.
 
 ### Secret Manager keys consumed by VM
 

@@ -1355,7 +1355,11 @@ Shared helper at `lib/api/refresh.ts` is also used by `documents-upload.tsx` to 
 
 **Tests:** 123 new tests; coverage ≥ 99 % on new BE modules (100 % on use-cases/ports/dtos/domain/repo/in-memory-storage; 97 % on routes). Full BE suite: 1618 pass / 20 skip. FE: 1077 vitest tests. Permission matrix exhaustive (non-member, member-non-uploader, uploader, owner, admin × each verb). Adversarial: cross-project, soft-delete races, orphan cleanup on commit failure, rate-limit, path traversal, Unicode/control-char filenames.
 
-**Out of scope (tracked):** OCR, virus/malware scan, server-side preview-conversion (DOCX/XLSX/DWG → PDF), bulk-zip download, versioning, MinIO janitor for soft-deleted rows, UI to recover soft-deleted documents.
+**Retention janitor (`PurgeSoftDeletedDocumentsUseCase`)** — operator-run CLI at `scripts/purge_soft_deleted_documents.py` reclaims MinIO objects for rows whose `deleted_at` exceeds a retention window. Refuses `--retention-days <= 0`. Storage delete first, then DB hard-delete (re-runnable on partial failure since S3 deletes are idempotent). Failed rows are collected per-batch into the returned `PurgeResultDTO.failed` list — the run does NOT abort on one bad row. Repository methods: `find_soft_deleted_before(cutoff, limit)` (oldest first) and `hard_delete(doc_id)` (idempotent). Operator wires this to cron / RQ scheduler at deployment time.
+
+**Filename sanitation port** — `IFilenameSanitizer(Protocol)` with `WerkzeugFilenameSanitizer` adapter in `app/infrastructure/adapters/`. The upload use-case takes the sanitizer via DI instead of importing werkzeug directly, restoring the hexagonal-layering invariant.
+
+**Out of scope (tracked):** OCR, virus/malware scan, server-side preview-conversion (DOCX/XLSX/DWG → PDF), bulk-zip download, versioning, UI to recover soft-deleted documents.
 
 ## Unresolved Architectural Decisions
 
