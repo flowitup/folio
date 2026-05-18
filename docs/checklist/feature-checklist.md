@@ -128,6 +128,12 @@ FE-only; uses the existing `PUT /api/v1/projects/<id>` and `DELETE /api/v1/proje
 
 ---
 
+## Invoices · Billing → Funds Release Link
+
+`GET /api/v1/projects/<id>/invoices` now returns `funds_released_total` (sum of all `released_funds` invoices). Auto-generated invoices carry `is_auto_generated: true` and `source_billing_document_id: UUID`; PUT/DELETE on these returns 403. New columns: `source_billing_document_id` (UUID FK UNIQUE, ON DELETE SET NULL), `is_auto_generated` (BOOLEAN NOT NULL default false). Migration: `a4f5b6c7d8e9_add_funds_release_link_columns`.
+
+---
+
 ## Invoices · Monthly Export (Excel / PDF)
 
 | Method | Path | Auth | Notes |
@@ -153,7 +159,7 @@ Auth for all routes: `@jwt_required()` + row-level ownership check (`billing_doc
 | DELETE | `/api/v1/billing-documents/<id>` | Delete document | — |
 | POST | `/api/v1/billing-documents/<id>/clone` | Clone document (new number, status=draft, items/recipient copied) | 10/min |
 | POST | `/api/v1/billing-documents/<id>/convert-to-facture` | Convert accepted devis → new facture; sets `source_devis_id`; race-safe | 10/min |
-| PATCH | `/api/v1/billing-documents/<id>/status` | Transition status; validates per-kind matrix; 409 on invalid transition | 30/min |
+| PATCH | `/api/v1/billing-documents/<id>/status` | Transition status; validates per-kind matrix; 409 on invalid transition. Facture→PAID with `project_id` auto-creates `released_funds` invoice; PAID→CANCELLED deletes it. | 30/min |
 | GET | `/api/v1/billing-documents/<id>/pdf` | Render + stream PDF via ReportLab (DejaVu fonts) | 5/min |
 | POST | `/api/v1/billing-documents/from-template/<template_id>` | Apply template → new document (recipient + dates supplied in body) | 10/min |
 | POST | `/api/v1/billing-documents/import` | Import legacy doc with verbatim `document_number` + explicit `status` + optional `created_at`; bumps counter to `MAX(existing, parsed_seq)`; 409 on duplicate `(company_id, kind, document_number)` | 30/min |
