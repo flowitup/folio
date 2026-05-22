@@ -14,17 +14,8 @@ plans/
 # Agent-generated feature artifacts
 .feature-screenshots/
 FEATURES.md
+FEATURE.md
 
-# Agent scratch and generated docs (keep only human-authored core docs)
-docs/CLAUDE.md
-docs/ai/
-docs/checklist/
-docs/guide/
-docs/plans/
-docs/journals/
-docs/state/
-docs/tmp/
-docs/codebase-summary.md
-docs/design-guidelines.md
-docs/project-roadmap.md
-docs/security-checklist.md
+# Private — not published to GitHub
+docs/
+infra/
