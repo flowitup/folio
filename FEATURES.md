@@ -171,6 +171,7 @@ Sidebar entry "Documents" appears after Notes when a project is selected. Projec
 - Filter chips for type (All / PDF / Image / Spreadsheet / Document / CAD / Text / Other) + uploader `<Select>`
 - Inline preview dialog: `<embed>` for PDF, `<img>` for images, fallback "Download to view" for other types. Authenticated via blob-fetch with Bearer JWT (native `<embed src>` can't send headers).
 - Per-row download button (also authenticated via blob-fetch + transient `<a>` click).
+- Rename dialog — pencil icon opens a modal with pre-filled filename; extension is locked (must match original). Same permission gate as delete (uploader, project owner, or `*:*` admin). `PATCH /projects/:id/documents/:docId/rename` with `{ "filename": "new-name.pdf" }`. Only the display name changes; the storage key is immutable.
 - Soft-delete with confirm dialog — uploader OR project owner OR `*:*` admin only.
 - Rate-limited: 30 uploads / minute / user (Flask-Limiter, keyed by JWT identity).
 
