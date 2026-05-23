@@ -55,6 +55,9 @@ services:
       - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
       - "S3_BUCKET=${S3_BUCKET:?required}"
       - "S3_REGION=${S3_REGION:?required}"
+      # Public-facing S3/MinIO URL for browser-direct presigned uploads.
+      # Empty = presigned upload disabled; frontend falls back to multipart POST.
+      - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
 
   worker:
     # Shared with api (Y5 — single Dockerfile, different command). Same SHA.
@@ -83,11 +86,14 @@ services:
 
   minio:
     ports: !override
-      - "127.0.0.1:9000:9000"   # S3 API — reached by cloudflared / SSH-tunnel only
+      - "127.0.0.1:9000:9000"   # S3 API — reached by nginx proxy / SSH-tunnel only
       - "127.0.0.1:9001:9001"   # console — admin via SSH port-forward only
     environment:
       - "MINIO_ROOT_USER=${S3_ACCESS_KEY:?required}"
       - "MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:?required}"
+      # Accept requests with the public hostname in the Host header so
+      # presigned URL signature verification succeeds through the nginx proxy.
+      - "MINIO_SERVER_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
 
   frontend:
     image: europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/frontend:${IMAGE_TAG:-latest}
