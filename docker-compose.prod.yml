@@ -55,6 +55,7 @@ services:
       - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
       - "S3_BUCKET=${S3_BUCKET:?required}"
       - "S3_REGION=${S3_REGION:?required}"
+      - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
 
   worker:
     # Shared with api (Y5 — single Dockerfile, different command). Same SHA.
@@ -88,6 +89,7 @@ services:
     environment:
       - "MINIO_ROOT_USER=${S3_ACCESS_KEY:?required}"
       - "MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:?required}"
+      - "MINIO_SERVER_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
 
   frontend:
     image: europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/frontend:${IMAGE_TAG:-latest}
@@ -97,3 +99,4 @@ services:
     environment:
       - "NODE_ENV=production"
       - "API_INTERNAL_BASE_URL=${API_INTERNAL_BASE_URL:?required}"
+      - "NEXT_PUBLIC_S3_PUBLIC_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
