@@ -46,12 +46,6 @@ services:
       # Plus app/__init__.py fail-fast asserts no "dev-" in JWT/SECRET keys.
       - "FLASK_ENV=production"
       - "FLASK_DEBUG=false"
-      # Expose the OpenAPI spec (/openapi.json) and Swagger UI (/v1/documentation)
-      # in production. Default is off (anti-recon); enabled here intentionally.
-      # Requires a matching Cloudflare ingress route for those paths to reach
-      # the backend (see infra/cloudflare/cloudflared-config.yml) — without it
-      # the edge sends them to the Next.js frontend.
-      - "EXPOSE_DOCS=1"
       # Base URL used to build accept-invite links inside invitation emails
       # (app/application/invitations/create_invitation_usecase.py). Without this,
       # wiring.py falls back to http://localhost:3000.
