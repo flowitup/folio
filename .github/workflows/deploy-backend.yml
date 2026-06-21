@@ -84,7 +84,7 @@ jobs:
           echo "::notice::deploying api v$VERSION (sha $SHA)"
 
       - name: Checkout parent (for deploy scripts + compose files)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           # Build job is contents:read — no need to persist credentials in
           # the worktree (eliminates one exfil vector).
@@ -92,7 +92,7 @@ jobs:
           fetch-depth: 1
 
       - name: Checkout folio-back-end at SHA
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           repository: ${{ env.SUBMODULE_REPO }}
           ref: ${{ steps.input.outputs.sha }}
@@ -275,7 +275,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout parent (with write credentials)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: true
           fetch-depth: 0
