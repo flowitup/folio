@@ -6,10 +6,14 @@
 #   - workflow_dispatch with explicit version + sha (manual fallback).
 #
 # Flow: checkout submodule@<sha> → buildx with NEXT_PUBLIC_API_BASE_URL baked
-#   → push to AR (tag <sha> + latest) → gcloud IAP SSH →
+#   → push to AR (tag <sha> + latest) → SSH to Hetzner prod host → AR
+#   docker-login (short-lived WIF token) →
 #   /opt/folio/scripts/deploy-runner.sh <sha> frontend → CF cache purge →
 #   smoke / (follows next-intl locale redirect) → (separate job) submodule
 #   pointer bump.
+#
+# Host: Hetzner CX33 `folio-prod-1` (46.224.167.14) since the 2026-07-15
+# GCP→Hetzner migration. AR stays on GCP (image registry only).
 #
 # Note: NEXT_PUBLIC_* envs are baked into the JS bundle at build time. If the
 # prod domain ever changes, all FE images need rebuilding.
@@ -46,8 +50,8 @@ env:
   REGION: europe-west1
   AR_REPO: folio
   IMAGE_NAME: frontend
-  VM_NAME: flowitup-folio-prod-1
-  ZONE: europe-west1-b
+  PROD_HOST: 46.224.167.14   # Hetzner folio-prod-1
+  PROD_SSH_USER: root
   PROD_DOMAIN: folio.flowitup.com
   SUBMODULE_REPO: flowitup/folio-front-end
   SUBMODULE_PATH: folio-front-end
@@ -174,54 +178,60 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
+      - name: Setup SSH to prod host (Hetzner)
+        # Dedicated CI keypair (folio-ci-deploy). Host key pinned — fails
+        # closed on MITM or a rebuilt server. See deploy-backend.yml.
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/prod_ed25519
+          chmod 600 ~/.ssh/prod_ed25519
+          echo "${PROD_HOST} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL3VjxZ2FCtovWWzZFNQvtNd4STB6qO8KSkEI62tkWOO" > ~/.ssh/known_hosts
+          echo "SSH_OPTS=-i $HOME/.ssh/prod_ed25519 -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_ENV"
+
       - name: Sync deploy bundle to VM
         # Push parent's scripts/deploy/* and docker-compose*.yml onto the VM
-        # so /opt/folio/ always reflects parent master. Stage in a per-run
-        # tempdir to avoid collisions with leftover root-owned files in /tmp
-        # from prior provisioning.
-        #
-        # All `${{ ... }}` interpolations are bound into env vars first and
-        # then referenced as shell `$VAR`s. See deploy-backend.yml for the
-        # full rationale.
+        # so /opt/folio/ always reflects parent master. Env-var binding
+        # rationale: see deploy-backend.yml. SSH user is root — no sudo.
         env:
           STAGE_DIR: /tmp/folio-deploy-${{ github.run_id }}
         run: |
           set -e
-          gcloud compute ssh "$VM_NAME" \
-            --tunnel-through-iap --zone="$ZONE" --quiet \
-            --command="rm -rf \"$STAGE_DIR\" && mkdir -p \"$STAGE_DIR\""
-          gcloud compute scp \
-            --tunnel-through-iap --zone="$ZONE" --quiet \
+          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" "rm -rf '${STAGE_DIR}' && mkdir -p '${STAGE_DIR}'"
+          scp $SSH_OPTS \
             scripts/deploy/deploy-runner.sh \
             scripts/deploy/wait-healthy.sh \
             scripts/deploy/rollback.sh \
             docker-compose.yml \
             docker-compose.prod.yml \
-            "${VM_NAME}:${STAGE_DIR}/"
-          gcloud compute ssh "$VM_NAME" \
-            --tunnel-through-iap --zone="$ZONE" --quiet \
-            --command="
-              set -e
-              sudo mkdir -p /opt/folio/scripts
-              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
-              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
-              sudo install -o root -g root -m 755 \"$STAGE_DIR\"/rollback.sh      /opt/folio/scripts/rollback.sh
-              sudo install -o root -g root -m 644 \"$STAGE_DIR\"/docker-compose.yml      /opt/folio/docker-compose.yml
-              sudo install -o root -g root -m 644 \"$STAGE_DIR\"/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
-              rm -rf \"$STAGE_DIR\"
-              echo 'deploy bundle synced:'
-              ls -la /opt/folio/scripts/ /opt/folio/docker-compose*.yml
-            "
+            "${PROD_SSH_USER}@${PROD_HOST}:${STAGE_DIR}/"
+          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" "
+            set -e
+            mkdir -p /opt/folio/scripts
+            install -o root -g root -m 755 '${STAGE_DIR}'/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
+            install -o root -g root -m 755 '${STAGE_DIR}'/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
+            install -o root -g root -m 755 '${STAGE_DIR}'/rollback.sh      /opt/folio/scripts/rollback.sh
+            install -o root -g root -m 644 '${STAGE_DIR}'/docker-compose.yml      /opt/folio/docker-compose.yml
+            install -o root -g root -m 644 '${STAGE_DIR}'/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
+            rm -rf '${STAGE_DIR}'
+            echo 'deploy bundle synced:'
+            ls -la /opt/folio/scripts/ /opt/folio/docker-compose*.yml
+          "
 
       - name: Deploy on VM (deploy-runner.sh)
+        # AR pull auth via short-lived WIF token piped to docker login on the
+        # host — no SA keys on the VM. See deploy-backend.yml.
         env:
           SHA: ${{ steps.input.outputs.sha }}
         run: |
-          gcloud compute ssh "$VM_NAME" \
-            --tunnel-through-iap \
-            --zone="$ZONE" \
-            --quiet \
-            --command="sudo /opt/folio/scripts/deploy-runner.sh \"$SHA\" frontend"
+          set -e
+          gcloud auth print-access-token \
+            | ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" \
+                "docker login -u oauth2accesstoken --password-stdin ${REGION}-docker.pkg.dev"
+          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" \
+            "/opt/folio/scripts/deploy-runner.sh '${SHA}' frontend; rc=\$?; docker logout ${REGION}-docker.pkg.dev >/dev/null 2>&1 || true; exit \$rc"
 
       - name: Purge Cloudflare edge cache
         # Required: /_next/static/* has 1-month edge TTL. Without purge, users
