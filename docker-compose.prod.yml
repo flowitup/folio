@@ -47,9 +47,9 @@ services:
       - "FLASK_ENV=production"
       - "FLASK_DEBUG=false"
       # Sign-in offered by this deployment (config/__init__.py LOGIN_MODE):
-      # email only — the phone + SMS-code sign-in answers 404 here and the
-      # mobile app hides it. Refresh tokens keep the default 7-day policy.
-      - "LOGIN_MODE=email"
+      # both email + password and phone + SMS code; the mobile app shows a
+      # switch, phone first. Refresh tokens keep the default 7-day policy.
+      - "LOGIN_MODE=both"
       # Base URL used to build accept-invite links inside invitation emails
       # (app/application/invitations/create_invitation_usecase.py). Without this,
       # wiring.py falls back to http://localhost:3000.
