@@ -50,6 +50,10 @@ services:
       # both email + password and phone + SMS code; the mobile app shows a
       # switch, phone first. Refresh tokens keep the default 7-day policy.
       - "LOGIN_MODE=both"
+      # Team chat (app/api/v1/chat, config/__init__.py FEATURE_CHAT — default off).
+      # Gates every chat route and the `chat` flag returned by GET /api/v1/features,
+      # which the web widget and the mobile chat tab read before showing themselves.
+      - "FEATURE_CHAT=1"
       # Base URL used to build accept-invite links inside invitation emails
       # (app/application/invitations/create_invitation_usecase.py). Without this,
       # wiring.py falls back to http://localhost:3000.
