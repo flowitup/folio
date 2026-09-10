@@ -46,11 +46,13 @@ services:
       # Plus app/__init__.py fail-fast asserts no "dev-" in JWT/SECRET keys.
       - "FLASK_ENV=production"
       - "FLASK_DEBUG=false"
-      # Sign-in offered by this deployment (config/__init__.py LOGIN_MODE):
-      # phone number + SMS code only. /auth/login (email + password) answers
-      # 404 and both apps show the phone screen. Refresh tokens keep the
-      # default 7-day policy.
-      - "LOGIN_MODE=phone"
+      # Sign-in offered by this deployment (config/__init__.py LOGIN_MODE).
+      # Target is "phone" (SMS code only; /auth/login answers 404 and both apps
+      # show the phone screen). Kept at "both" until every active user has a
+      # phone on their account (Settings › Profile on the web, Settings › Users
+      # on mobile) — with "phone" an account without one cannot sign in at all.
+      # Refresh tokens keep the default 7-day policy.
+      - "LOGIN_MODE=both"
       # Sign-in codes leave from the owner's Android phone through the
       # "SMS Gateway for Android" app (app/infrastructure/adapters/sms_gateway_sender.py).
       # SMS_GATEWAY_URL is the full message endpoint the prod host can reach:
