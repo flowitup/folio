@@ -122,6 +122,21 @@ Each submodule (`folio-back-end`, `folio-front-end`):
   `repository_dispatch` API requires `Contents: write` for fine-grained
   PATs). Used to send `repository_dispatch` after release.
 
+### Runtime secrets (Secret Manager → `/opt/folio/.env`)
+
+Every `${VAR:?required}` in `docker-compose.prod.yml` is rendered on the host
+from a `folio-<name>` secret in `flowitup-folio-prod` (`folio-render-env.service`).
+Adding a compose variable therefore means: create the secret, add it to the
+render mapping on the host, re-render, recreate the service. Sign-in codes
+(phone-only login since 2026-09-10) go out through the Android SMS gateway:
+
+- `folio-sms-gateway-url` → `SMS_GATEWAY_URL` — full message endpoint reachable
+  from the prod host (`http://<phone-ip>:8080/message` local server, or
+  `https://api.sms-gate.app/3rdparty/v1/messages` cloud relay).
+- `folio-sms-gateway-username` / `folio-sms-gateway-password` →
+  `SMS_GATEWAY_USERNAME` / `SMS_GATEWAY_PASSWORD` — Basic-auth credentials
+  shown in the app for that mode (local and cloud credentials differ).
+
 ### Concurrency + safety
 
 - `concurrency.group=deploy-prod-backend` / `deploy-prod-frontend` —

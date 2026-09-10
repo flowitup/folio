@@ -46,10 +46,23 @@ services:
       # Plus app/__init__.py fail-fast asserts no "dev-" in JWT/SECRET keys.
       - "FLASK_ENV=production"
       - "FLASK_DEBUG=false"
-      # Sign-in offered by this deployment (config/__init__.py LOGIN_MODE):
-      # both email + password and phone + SMS code; the mobile app shows a
-      # switch, phone first. Refresh tokens keep the default 7-day policy.
+      # Sign-in offered by this deployment (config/__init__.py LOGIN_MODE).
+      # Target is "phone" (SMS code only; /auth/login answers 404 and both apps
+      # show the phone screen). Kept at "both" until every active user has a
+      # phone on their account (Settings › Profile on the web, Settings › Users
+      # on mobile) — with "phone" an account without one cannot sign in at all.
+      # Refresh tokens keep the default 7-day policy.
       - "LOGIN_MODE=both"
+      # Sign-in codes leave from the owner's Android phone through the
+      # "SMS Gateway for Android" app (app/infrastructure/adapters/sms_gateway_sender.py).
+      # SMS_GATEWAY_URL is the full message endpoint the prod host can reach:
+      # the phone's local server (http://<ip>:8080/message) or the cloud relay
+      # (https://api.sms-gate.app/3rdparty/v1/messages); credentials are shown in the app.
+      # Secret Manager: folio-sms-gateway-{url,username,password}.
+      - "SMS_PROVIDER=gateway"
+      - "SMS_GATEWAY_URL=${SMS_GATEWAY_URL:?required}"
+      - "SMS_GATEWAY_USERNAME=${SMS_GATEWAY_USERNAME:?required}"
+      - "SMS_GATEWAY_PASSWORD=${SMS_GATEWAY_PASSWORD:?required}"
       # Team chat (app/api/v1/chat, config/__init__.py FEATURE_CHAT — default off).
       # Gates every chat route and the `chat` flag returned by GET /api/v1/features,
       # which the web widget and the mobile chat tab read before showing themselves.
