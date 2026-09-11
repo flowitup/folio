@@ -26,6 +26,14 @@ services:
       - S3_SECRET_KEY=${S3_SECRET_KEY:-minioadmin}
       - S3_BUCKET=${S3_BUCKET:-construction-attachments}
       - S3_REGION=${S3_REGION:-us-east-1}
+      # Sign-in is phone + SMS code only, and the code is written to the API log
+      # (SMS_PROVIDER defaults to "log"). These two let the Playwright suite and
+      # manual QA finish a sign-in without reading a log line: the backend accepts
+      # OTP_TEST_CODE in place of the real code, but only when FLASK_ENV is an
+      # explicit non-production value — an unset FLASK_ENV counts as production and
+      # refuses the bypass. Both are absent from docker-compose.prod.yml.
+      - FLASK_ENV=${FLASK_ENV:-development}
+      - OTP_TEST_CODE=${OTP_TEST_CODE:-424242}
 
   worker:
     environment:

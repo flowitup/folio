@@ -46,12 +46,18 @@ services:
       # Plus app/__init__.py fail-fast asserts no "dev-" in JWT/SECRET keys.
       - "FLASK_ENV=production"
       - "FLASK_DEBUG=false"
-      # Sign-in offered by this deployment (config/__init__.py LOGIN_MODE):
-      # phone number + SMS code only. /auth/login (email + password) answers
-      # 404 and both apps show the phone screen. Every active account carried a
-      # phone before this flip (2026-09-11); an account without one cannot sign
-      # in at all. Refresh tokens keep the default 7-day policy.
-      - "LOGIN_MODE=phone"
+      # Phone number + SMS code is the only sign-in there is: the e-mail and
+      # password route was deleted from the API (flowitup/folio-back-end#174),
+      # and with it the LOGIN_MODE switch that used to select between them. An
+      # account without a phone number cannot sign in at all. Refresh tokens
+      # keep the default 7-day policy.
+      #
+      # cloudflared is the single proxy in front of this container, so the API
+      # reads the caller's address from the X-Forwarded-For it sets. Without
+      # this the socket peer — cloudflared itself — is the address every rate
+      # limit counts against, and the "5 per minute" on the sign-in code routes
+      # becomes one bucket shared by everybody.
+      - "TRUSTED_PROXY_HOPS=1"
       # Sign-in codes leave from the owner's Android phone through the
       # "SMS Gateway for Android" app (app/infrastructure/adapters/sms_gateway_sender.py).
       # SMS_GATEWAY_URL is the full message endpoint the prod host can reach:
