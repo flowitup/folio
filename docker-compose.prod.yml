@@ -68,6 +68,18 @@ services:
       - "SMS_GATEWAY_URL=${SMS_GATEWAY_URL:?required}"
       - "SMS_GATEWAY_USERNAME=${SMS_GATEWAY_USERNAME:?required}"
       - "SMS_GATEWAY_PASSWORD=${SMS_GATEWAY_PASSWORD:?required}"
+      # Store-review account (App Store / Play review). ONE French number whose
+      # sign-in code is fixed, so a reviewer with no access to the SIM can still
+      # get past the phone-only login: /otp/request stores a code but sends no
+      # SMS and skips the throttle, /otp/verify accepts OTP_REVIEWER_CODE — for
+      # that number only. Every other phone still needs its real SMS code, and
+      # the fixed code is rejected for them (app/application/usecases/otp_login.py
+      # _reviewer_code_for). Set BOTH or NEITHER: config validation rejects half a
+      # configuration rather than half-enabling the bypass. Empty defaults on
+      # purpose, so clearing the secrets after a review cannot break a deploy.
+      # Secret Manager: folio-otp-reviewer-{phone,code}.
+      - "OTP_REVIEWER_PHONE=${OTP_REVIEWER_PHONE:-}"
+      - "OTP_REVIEWER_CODE=${OTP_REVIEWER_CODE:-}"
       # Team chat (app/api/v1/chat, config/__init__.py FEATURE_CHAT — default off).
       # Gates every chat route and the `chat` flag returned by GET /api/v1/features,
       # which the web widget and the mobile chat tab read before showing themselves.
