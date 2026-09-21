@@ -37,7 +37,7 @@ The stack includes an `ai-browser` service (assistant browser-automation
 container, `folio-back-end/Dockerfile.browser`) alongside `api`/`worker`. The
 assistant feature is on by default locally (`FEATURE_ASSISTANT=1`,
 `SCAN_MODE=opencv`) but the AI keys (`DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`,
-`TAVILY_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY`) default to empty, so
+`GEMINI_API_KEY`) default to empty, so
 `GET /api/v1/features` reports `assistant: false` until you export them.
 
 ---
