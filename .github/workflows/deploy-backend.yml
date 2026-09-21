@@ -205,7 +205,7 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/prod_ed25519
           chmod 600 ~/.ssh/prod_ed25519
           echo "${PROD_HOST} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL3VjxZ2FCtovWWzZFNQvtNd4STB6qO8KSkEI62tkWOO" > ~/.ssh/known_hosts
-          echo "SSH_OPTS=-i $HOME/.ssh/prod_ed25519 -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_ENV"
+          echo "SSH_OPTS=-i $HOME/.ssh/prod_ed25519 -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20" >> "$GITHUB_ENV"
 
       - name: Sync deploy bundle to VM
         # Push parent's scripts/deploy/* and docker-compose*.yml onto the VM
