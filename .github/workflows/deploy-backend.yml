@@ -170,6 +170,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend
 
       - name: Build + push ai-browser image
+        # A failed side-car build must not block the api deploy: deploy-runner.sh
+        # tolerates a missing ai-browser image and keeps the previous container.
+        continue-on-error: true
         # Same source (folio-back-end@<sha>), separate Dockerfile — adds
         # Chrome + xvfb for the assistant's browser-automation container
         # (docker-compose ai-browser service). No HTTP port, so this image

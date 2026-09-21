@@ -26,6 +26,9 @@ esac
 
 cd /opt/folio
 export IMAGE_TAG="$SHA"
+# ai-browser sits behind the "assistant" compose profile so a plain local
+# `docker compose up` never builds the 2.5 GB Chrome image; prod always enables it.
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-assistant}"
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file /opt/folio/.env)
 
 log() { printf '[deploy-runner %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -76,7 +79,13 @@ fi
 /opt/folio/scripts/wait-healthy.sh "$SVC"
 if [[ "$SVC" == "api" ]]; then
   /opt/folio/scripts/wait-healthy.sh worker
-  [[ "$SKIP_AI_BROWSER" == "0" ]] && /opt/folio/scripts/wait-healthy.sh ai-browser
+  # ai-browser serves no traffic and is double-gated (flag + keys): a sick side-car
+  # must not fail the deploy — that would skip the pointer bump while the api is
+  # already live. Warn loudly instead.
+  if [[ "$SKIP_AI_BROWSER" == "0" ]]; then
+    /opt/folio/scripts/wait-healthy.sh ai-browser \
+      || log "WARNING: ai-browser not healthy after the swap — check 'docker logs folio-ai-browser-1'"
+  fi
 fi
 
 log "deploy ok: $SVC@$SHA"

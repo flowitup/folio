@@ -46,6 +46,7 @@ fi
 echo "[rollback] $SVC → $SHA"
 cd /opt/folio
 export IMAGE_TAG="$SHA"
+export COMPOSE_PROFILES="${COMPOSE_PROFILES:-assistant}"
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file /opt/folio/.env)
 
 "${COMPOSE[@]}" pull "$SVC"
@@ -56,13 +57,19 @@ if [[ "$SVC" == "api" ]]; then
   "${COMPOSE[@]}" up -d --no-deps worker
   # ai-browser has its own image (built alongside api by the same CI run, same
   # SHA tag) — needs its own pull before it can be swapped.
-  "${COMPOSE[@]}" pull ai-browser
-  "${COMPOSE[@]}" up -d --no-deps ai-browser
+  # A rollback target that predates the assistant has no ai-browser image:
+  # never let that abort the api/worker rollback already in flight.
+  if "${COMPOSE[@]}" pull ai-browser; then
+    "${COMPOSE[@]}" up -d --no-deps ai-browser
+  else
+    echo "[rollback] WARNING: ai-browser:$SHA not found — leaving ai-browser as is"
+  fi
 fi
 
 /opt/folio/scripts/wait-healthy.sh "$SVC"
 if [[ "$SVC" == "api" ]]; then
   /opt/folio/scripts/wait-healthy.sh worker
-  /opt/folio/scripts/wait-healthy.sh ai-browser
+  # ai-browser serves no traffic: a sick side-car is a warning, not a failed rollback.
+  /opt/folio/scripts/wait-healthy.sh ai-browser || echo "[rollback] WARNING: ai-browser not healthy — check 'docker logs folio-ai-browser-1'"
 fi
 echo "[rollback] ok: $SVC@$SHA"
