@@ -14,8 +14,8 @@ SVC="${1:?usage: $0 <service> [<sha>]}"
 SHA="${2:-}"
 
 case "$SVC" in
-  api|frontend|worker) ;;
-  *) echo "rollback: invalid service '$SVC' (allowed: api, frontend, worker)" >&2; exit 2 ;;
+  api|frontend|worker|ai-browser) ;;
+  *) echo "rollback: invalid service '$SVC' (allowed: api, frontend, worker, ai-browser)" >&2; exit 2 ;;
 esac
 
 PROJECT_ID="${PROJECT_ID:-flowitup-folio-prod}"
@@ -50,9 +50,19 @@ COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-f
 
 "${COMPOSE[@]}" pull "$SVC"
 "${COMPOSE[@]}" up -d --no-deps "$SVC"
-# api shares image with worker — roll worker back too
-[[ "$SVC" == "api" ]] && "${COMPOSE[@]}" up -d --no-deps worker
+if [[ "$SVC" == "api" ]]; then
+  # api shares its image with worker (Y5) — no separate pull needed, `up`
+  # reuses the image just pulled above.
+  "${COMPOSE[@]}" up -d --no-deps worker
+  # ai-browser has its own image (built alongside api by the same CI run, same
+  # SHA tag) — needs its own pull before it can be swapped.
+  "${COMPOSE[@]}" pull ai-browser
+  "${COMPOSE[@]}" up -d --no-deps ai-browser
+fi
 
 /opt/folio/scripts/wait-healthy.sh "$SVC"
-[[ "$SVC" == "api" ]] && /opt/folio/scripts/wait-healthy.sh worker
+if [[ "$SVC" == "api" ]]; then
+  /opt/folio/scripts/wait-healthy.sh worker
+  /opt/folio/scripts/wait-healthy.sh ai-browser
+fi
 echo "[rollback] ok: $SVC@$SHA"

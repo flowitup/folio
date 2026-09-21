@@ -34,12 +34,28 @@ services:
       # refuses the bypass. Both are absent from docker-compose.prod.yml.
       - FLASK_ENV=${FLASK_ENV:-development}
       - OTP_TEST_CODE=${OTP_TEST_CODE:-424242}
+      # Assistant AI feature: on by default locally so the conversation is
+      # visible without extra setup, and SCAN_MODE defaults to the free local
+      # opencv path instead of the paid GenAI one. The API keys themselves
+      # are NOT defaulted here — they stay empty until a developer exports
+      # them, so GET /features still reports assistant:false (D3) until then.
+      - FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}
+      - SCAN_MODE=${SCAN_MODE:-opencv}
 
   worker:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-construction}:${POSTGRES_PASSWORD:-construction}@db:5432/${POSTGRES_DB:-construction}
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
       - EMAIL_PROVIDER=${EMAIL_PROVIDER:-smtp}
+      # See `api` above — same dev defaults, keys still empty.
+      - FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}
+      - SCAN_MODE=${SCAN_MODE:-opencv}
+
+  ai-browser:
+    environment:
+      # See `api` above — same dev defaults, keys still empty.
+      - FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}
+      - SCAN_MODE=${SCAN_MODE:-opencv}
 
   db:
     environment:
