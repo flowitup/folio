@@ -57,10 +57,17 @@ fi
 # directly or a custom script, replace this command — see infra/gcp/README.md
 # Phase 5 "open verification" note.
 if [[ "$SVC" == "api" ]]; then
+  # The ai-browser side-car polls assistant_jobs with SELECT ... FOR UPDATE; a
+  # transaction it leaves open blocks any ALTER TABLE on that table for as long
+  # as it runs (the v0.4.0 deploy hung on exactly that). Stop it before the DDL;
+  # step 3 recreates it from the new image. lock_timeout turns any remaining
+  # blocker into a clear error instead of a hang that outlives the SSH session.
+  log "stopping ai-browser before migrations"
+  "${COMPOSE[@]}" stop ai-browser || log "WARNING: ai-browser was not running"
   log "running migrations (flask db upgrade)"
   # FLASK_APP=app:create_app matches folio-back-end's hexagonal layout
   # (factory function in app/__init__.py). docs/deployment-guide.md §3.1.
-  "${COMPOSE[@]}" run --rm -e FLASK_APP=app:create_app api flask db upgrade
+  "${COMPOSE[@]}" run --rm -e FLASK_APP=app:create_app -e PGOPTIONS="-c lock_timeout=120s" api flask db upgrade
 fi
 
 # 3. Swap container(s) with --no-deps so dependencies (db/redis/minio) aren't bounced.
