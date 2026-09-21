@@ -94,6 +94,25 @@ services:
       - "S3_BUCKET=${S3_BUCKET:?required}"
       - "S3_REGION=${S3_REGION:?required}"
       - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
+      # Assistant AI feature (app/assistant BC, ai-browser container below).
+      # The flag is ON in prod, but it stays dark in practice: GET
+      # /api/v1/features only reports assistant:true once BOTH
+      # DEEPSEEK_API_KEY and TYPESAFE_API_KEY are non-empty (config/__init__.py,
+      # decision D3) — i.e. until the owner adds the keys to /opt/folio/.env
+      # and recreates api + worker (+ ai-browser). Every key defaults to
+      # empty so a fresh deploy without them cannot abort compose.
+      - "FEATURE_ASSISTANT=1"
+      - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
+      - "TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}"
+      - "TAVILY_API_KEY=${TAVILY_API_KEY:-}"
+      - "GEMINI_API_KEY=${GEMINI_API_KEY:-}"
+      - "SERPAPI_API_KEY=${SERPAPI_API_KEY:-}"
+      - "SCAN_MODE=${SCAN_MODE:-genai}"
+      - "JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}"
+      - "ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}"
+      - "BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}"
+      - "BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}"
+      - "BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}"
 
   worker:
     # Shared with api (Y5 — single Dockerfile, different command). Same SHA.
@@ -109,6 +128,48 @@ services:
       - "RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:?required}"
       - "FROM_EMAIL=${RESEND_FROM_EMAIL:?required}"
       - "FLASK_ENV=production"
+      # Assistant AI feature — see `api` above, same rationale (worker runs
+      # the assistant RQ jobs the api routes enqueue, so it needs the same
+      # flags/keys).
+      - "FEATURE_ASSISTANT=1"
+      - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
+      - "TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}"
+      - "TAVILY_API_KEY=${TAVILY_API_KEY:-}"
+      - "GEMINI_API_KEY=${GEMINI_API_KEY:-}"
+      - "SERPAPI_API_KEY=${SERPAPI_API_KEY:-}"
+      - "SCAN_MODE=${SCAN_MODE:-genai}"
+      - "JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}"
+      - "ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}"
+      - "BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}"
+      - "BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}"
+      - "BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}"
+
+  ai-browser:
+    # Built alongside api by deploy-backend.yml (second build-push step, same
+    # SHA tag) — see docker-compose.yml for what this container is and why
+    # it has no ports/healthcheck. pull_policy: always + IMAGE_TAG mirror the
+    # api service so deploy-runner.sh can swap it the same way.
+    image: europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/ai-browser:${IMAGE_TAG:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    shm_size: 1g
+    volumes:
+      - ai_browser_profile:/app/profile
+      - ai_browser_data:/app/data
+    environment:
+      - "DATABASE_URL=postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@db:5432/${POSTGRES_DB:?required}"
+      - "REDIS_URL=redis://redis:6379/0"
+      - "S3_ENDPOINT_URL=${S3_ENDPOINT_URL:?required}"
+      - "S3_ACCESS_KEY=${S3_ACCESS_KEY:?required}"
+      - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
+      - "S3_BUCKET=${S3_BUCKET:?required}"
+      - "S3_REGION=${S3_REGION:?required}"
+      - "FEATURE_ASSISTANT=1"
+      - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
+      - "JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}"
+      - "BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}"
+      - "BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}"
+      - "BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}"
 
   db:
     ports: !reset []

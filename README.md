@@ -33,6 +33,13 @@ Production on the VM uses the prod overlay (values come from
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
+The stack includes an `ai-browser` service (assistant browser-automation
+container, `folio-back-end/Dockerfile.browser`) alongside `api`/`worker`. The
+assistant feature is on by default locally (`FEATURE_ASSISTANT=1`,
+`SCAN_MODE=opencv`) but the AI keys (`DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`,
+`TAVILY_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY`) default to empty, so
+`GET /api/v1/features` reports `assistant: false` until you export them.
+
 ---
 
 ## Deploys
@@ -50,6 +57,12 @@ folio-back-end (or folio-front-end) merge to master
   → build+push image to AR → IAP SSH → deploy-runner.sh → smoke
   → commit submodule pointer bump on parent master
 ```
+
+`deploy-backend.yml` builds and pushes two images from the same
+`folio-back-end` SHA: `api` (also runs `worker`) and `ai-browser` (assistant
+browser-automation container). `deploy-runner.sh api` swaps and health-waits
+all three; a missing/failed `ai-browser` pull only skips that container, it
+never aborts the api/worker deploy.
 
 The submodule pointer in parent `master` always reflects the SHA running
 in prod. `git submodule status` from a fresh clone shows the live SHAs.
