@@ -115,6 +115,8 @@ services:
       context: ./folio-back-end
       dockerfile: Dockerfile.browser
     shm_size: 1g
+    # Lets the worker finish or requeue its current job on SIGTERM before Docker kills it.
+    stop_grace_period: 90s
     restart: unless-stopped
     volumes:
       - ai_browser_profile:/app/profile
@@ -138,6 +140,9 @@ services:
       - S3_REGION=${S3_REGION:?required}
       - FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      # Presence only ("1" or empty): the worker idles unless both keys exist, like /features.
+      - TYPESAFE_API_KEY_CONFIGURED=${TYPESAFE_API_KEY:+1}
+      - ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}
       - JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}
       - BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}
       - BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}

@@ -101,7 +101,8 @@ services:
       # decision D3) — i.e. until the owner adds the keys to /opt/folio/.env
       # and recreates api + worker (+ ai-browser). Every key defaults to
       # empty so a fresh deploy without them cannot abort compose.
-      - "FEATURE_ASSISTANT=1"
+      # FEATURE_ASSISTANT=0 in /opt/folio/.env switches it off without a PR.
+      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}"
       - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
       - "TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}"
       - "GEMINI_API_KEY=${GEMINI_API_KEY:-}"
@@ -129,7 +130,7 @@ services:
       # Assistant AI feature — see `api` above, same rationale (worker runs
       # the assistant RQ jobs the api routes enqueue, so it needs the same
       # flags/keys).
-      - "FEATURE_ASSISTANT=1"
+      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}"
       - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
       - "TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}"
       - "GEMINI_API_KEY=${GEMINI_API_KEY:-}"
@@ -149,6 +150,8 @@ services:
     pull_policy: always
     restart: unless-stopped
     shm_size: 1g
+    # Lets the worker finish or requeue its current job on SIGTERM before Docker kills it.
+    stop_grace_period: 90s
     volumes:
       - ai_browser_profile:/app/profile
       - ai_browser_data:/app/data
@@ -160,8 +163,10 @@ services:
       - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
       - "S3_BUCKET=${S3_BUCKET:?required}"
       - "S3_REGION=${S3_REGION:?required}"
-      - "FEATURE_ASSISTANT=1"
+      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}"
       - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
+      - "TYPESAFE_API_KEY_CONFIGURED=${TYPESAFE_API_KEY:+1}"
+      - "ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}"
       - "JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}"
       - "BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}"
       - "BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}"
