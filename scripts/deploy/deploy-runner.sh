@@ -27,8 +27,14 @@ esac
 cd /opt/folio
 export IMAGE_TAG="$SHA"
 # ai-browser sits behind the "assistant" compose profile so a plain local
-# `docker compose up` never builds the 2.5 GB Chrome image; prod always enables it.
-export COMPOSE_PROFILES="${COMPOSE_PROFILES:-assistant}"
+# `docker compose up` never builds the 2.5 GB Chrome image. Prod runs it only
+# while the assistant is switched on (FEATURE_ASSISTANT=1 in /opt/folio/.env);
+# otherwise every api deploy stops and removes it.
+ASSISTANT_ON=0
+grep -qE '^FEATURE_ASSISTANT=1[[:space:]]*$' /opt/folio/.env && ASSISTANT_ON=1
+if [[ "$ASSISTANT_ON" == "1" ]]; then
+  export COMPOSE_PROFILES="${COMPOSE_PROFILES:-assistant}"
+fi
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file /opt/folio/.env)
 
 log() { printf '[deploy-runner %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -38,9 +44,11 @@ log "pulling $SVC:$SHA"
 "${COMPOSE[@]}" pull "$SVC"
 
 # Worker shares the api image (Y5) — pull it together so step 3 can swap both.
-SKIP_AI_BROWSER=0
+SKIP_AI_BROWSER=$(( 1 - ASSISTANT_ON ))
 if [[ "$SVC" == "api" ]]; then
   "${COMPOSE[@]}" pull worker
+fi
+if [[ "$SVC" == "api" && "$ASSISTANT_ON" == "1" ]]; then
   # ai-browser is its own image, built by the same CI run at the same SHA.
   # On the very first rollout after this was added (or if that build step
   # ever fails on its own) the tag may not exist yet — that must not abort
@@ -77,8 +85,11 @@ if [[ "$SVC" == "api" ]]; then
   "${COMPOSE[@]}" up -d --no-deps worker
   if [[ "$SKIP_AI_BROWSER" == "0" ]]; then
     "${COMPOSE[@]}" up -d --no-deps ai-browser
-  else
+  elif [[ "$ASSISTANT_ON" == "1" ]]; then
     log "skipping ai-browser swap (image not pulled)"
+  else
+    log "assistant switched off — removing ai-browser"
+    "${COMPOSE[@]}" --profile assistant rm -sf ai-browser || log "WARNING: could not remove ai-browser"
   fi
 fi
 
