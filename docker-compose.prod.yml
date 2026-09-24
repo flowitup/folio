@@ -95,14 +95,12 @@ services:
       - "S3_REGION=${S3_REGION:?required}"
       - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
       # Assistant AI feature (app/assistant BC, ai-browser container below).
-      # The flag is ON in prod, but it stays dark in practice: GET
-      # /api/v1/features only reports assistant:true once BOTH
-      # DEEPSEEK_API_KEY and TYPESAFE_API_KEY are non-empty (config/__init__.py,
-      # decision D3) — i.e. until the owner adds the keys to /opt/folio/.env
-      # and recreates api + worker (+ ai-browser). Every key defaults to
-      # empty so a fresh deploy without them cannot abort compose.
-      # FEATURE_ASSISTANT=0 in /opt/folio/.env switches it off without a PR.
-      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}"
+      # Switched OFF in prod: the code ships, but nothing answers @folio until
+      # FEATURE_ASSISTANT=1 AND DEEPSEEK_API_KEY + TYPESAFE_API_KEY are set in
+      # /opt/folio/.env (docs/assistant-runbook.md "Turning it on"); the next
+      # backend deploy then also starts ai-browser. Keys default to empty so
+      # compose never aborts without them.
+      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}"
       - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
       - "TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}"
       - "GEMINI_API_KEY=${GEMINI_API_KEY:-}"
@@ -130,7 +128,7 @@ services:
       # Assistant AI feature — see `api` above, same rationale (worker runs
       # the assistant RQ jobs the api routes enqueue, so it needs the same
       # flags/keys).
-      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}"
+      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}"
       - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
       - "TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}"
       - "GEMINI_API_KEY=${GEMINI_API_KEY:-}"
@@ -163,7 +161,7 @@ services:
       - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
       - "S3_BUCKET=${S3_BUCKET:?required}"
       - "S3_REGION=${S3_REGION:?required}"
-      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-1}"
+      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}"
       - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
       - "TYPESAFE_API_KEY_CONFIGURED=${TYPESAFE_API_KEY:+1}"
       - "ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}"
