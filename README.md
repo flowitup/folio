@@ -6,7 +6,7 @@ workflows and scripts that ship and run them on the prod host.
 ```
 folio-back-end/   → Flask 3 + hexagonal + SQLAlchemy + RQ        (flowitup/folio-back-end)
 folio-front-end/  → Next.js 16 + next-intl + Tailwind + shadcn   (flowitup/folio-front-end)
-scripts/          → deploy-runner, rollback, host backups       (see scripts/README.md)
+scripts/          → ci-deploy, deploy-runner, rollback, host backups (see scripts/README.md)
 ```
 
 Both submodules are public repos; this umbrella repo is private. The mobile
@@ -84,7 +84,8 @@ folio-back-end (or folio-front-end): PR merged to master, CI green
   → release job: next version from tags + PR label → tag v1.2.3 → GitHub Release
   → repository_dispatch (deploy-api / deploy-frontend) to flowitup/folio
   → parent .github/workflows/deploy-{backend,frontend}.yml
-  → build+push image to AR → SSH to the Hetzner prod host → deploy-runner.sh
+  → build+push image to AR → SSH with the restricted CI key:
+    `deploy <svc> <sha> <host-files sha256>` → ci-deploy.sh → deploy-runner.sh
   → (frontend: Cloudflare purge + 30 s) → smoke
   → commit submodule pointer bump on parent master
 ```
@@ -97,6 +98,14 @@ is set in `/opt/folio/.env` on the host (off by default in prod today); when
 it's off, deploy-runner stops and removes any running `ai-browser` instead of
 pulling the image. When it's on, a missing/failed `ai-browser` pull or
 health-wait only warns — it never aborts the api/worker deploy.
+
+The CI key can do nothing on the host but that deploy request: its forced
+command, `ci-deploy.sh`, refuses a shell, any other command and file copies.
+So CI no longer copies the host files (`scripts/deploy/*.sh` and both compose
+files) to the host; the owner installs them after they merge
+([scripts/README.md, "Installing the host files"](scripts/README.md#installing-the-host-files)).
+A deploy refuses to start while the host's copies differ from `master`'s, so a
+PR that changes one of them takes effect, and unblocks deploys, once installed.
 
 The pointer in parent `master` is bumped only after a deploy passes its smoke
 test, so it normally matches prod. It is stale after a hard rollback (see
@@ -121,7 +130,9 @@ gh workflow run deploy-frontend.yml -R flowitup/folio \
 `version` must be the release whose tag `v<version>` points at `sha`;
 otherwise the run fails, so only released SHAs can be deployed. For the
 backend, a SHA older than the database's migration head fails at
-`flask db upgrade`; use `rollback.sh` instead (see Rollback).
+`flask db upgrade`; use `rollback.sh` instead (see Rollback). Dispatch from
+`master` (the default): a run from another branch hashes that branch's host
+files, and the host refuses it unless they match the installed ones.
 
 ### Status
 
@@ -145,9 +156,9 @@ gh workflow run deploy-frontend.yml -R flowitup/folio -f version=<previous> -f s
 **Backend:** the workflow runs `flask db upgrade`, which fails for a SHA older
 than the database's migration head, so roll back on the host with
 `rollback.sh` (it runs no migrations). The host keeps no Artifact Registry
-login between deploys (the workflows log in with a one-hour token and log
-out). Log it in from a workstation with gcloud access to
-`flowitup-folio-prod`, and always pass the SHA:
+login between deploys (each deploy logs in with a one-hour token, in a
+throwaway Docker config deleted afterwards). Log it in from a workstation
+with gcloud access to `flowitup-folio-prod`, and always pass the SHA:
 
 ```bash
 gcloud artifacts docker tags list europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/api \
@@ -183,10 +194,14 @@ Parent repo `flowitup/folio` (Settings → Secrets and variables → Actions):
   `deploy-sa@flowitup-folio-prod.iam.gserviceaccount.com`. Org policy
   `iam.disableServiceAccountKeyCreation` blocks JSON keys, so we use OIDC
   via WIF — no `GCP_SA_KEY` needed, no key rotation.
-- `HETZNER_SSH_KEY` — private half of the dedicated CI deploy keypair; logs
-  in as `root` on the Hetzner prod host. The host key is pinned inline in
-  both workflows, so a MITM or rebuilt host fails the connection instead of
-  prompting; after a rebuild, update the pinned `ssh-ed25519` line in both.
+- `HETZNER_SSH_KEY` — private half of the dedicated CI deploy keypair
+  (`folio-ci-deploy`). On the Hetzner prod host it is one of root's keys, but
+  restricted to the forced command `/opt/folio/scripts/ci-deploy.sh`: it can
+  only request a deploy, never get a shell, run another command or copy
+  files. Both workflows check that before sending anything. The host key is
+  pinned inline in both workflows, so a MITM or rebuilt host fails the
+  connection instead of prompting; after a rebuild, update the pinned
+  `ssh-ed25519` line in both.
 - `CF_API_TOKEN` — Cloudflare token, zone-scoped, `Cache Purge:Edit` only.
 - `CF_ZONE_ID` — `flowitup.com` zone ID.
 - `SUBMODULE_TOKEN` — fine-grained PAT, scoped to `flowitup/folio-back-end`
@@ -232,8 +247,8 @@ SMS gateway:
 
 - `concurrency.group=deploy-prod-backend` / `deploy-prod-frontend` — two
   close pushes of the same submodule run one after the other. A backend and a
-  frontend deploy can still overlap on the host, and they share one registry
-  login.
+  frontend deploy can still overlap on the host; each logs in to the registry
+  with its own throwaway Docker config.
 - Smoke tries `/health` (backend, healthy JSON body) or `/` (frontend,
   Next.js asset marker after the locale redirect) up to 5 times, 5 s apart,
   and fails the workflow loud otherwise; the frontend purges the Cloudflare

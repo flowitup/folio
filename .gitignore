@@ -7,6 +7,9 @@
 # macOS noise
 .DS_Store
 
+# Python bytecode from the deploy-script tests (scripts/deploy/tests)
+*.py[cod]
+
 # Claude Code / agent artifacts
 .claude/
 plans/

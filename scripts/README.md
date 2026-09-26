@@ -1,8 +1,9 @@
 # Scripts
 
 Three groups: a local E2E smoke test, the host-side deploy/rollback scripts
-(synced to `/opt/folio/scripts/` by the deploy workflows' "Sync deploy bundle
-to VM" step on every deploy), and the host cron backup jobs.
+(installed in `/opt/folio/scripts/` by the owner, never by CI: see
+[Installing the host files](#installing-the-host-files)), and the host cron
+backup jobs.
 
 ## smoke-test.sh
 
@@ -56,12 +57,95 @@ email/password login. The seed script ignores the password and needs
 Exit codes: `0` all steps passed, `1` a step failed (or an unknown/invalid
 option), `0` for `--help`.
 
+## deploy/ci-deploy.sh
+
+The forced command of the CI deploy key (`folio-ci-deploy`, the
+`HETZNER_SSH_KEY` secret). Root's `authorized_keys` holds that key as
+
+```
+restrict,command="/opt/folio/scripts/ci-deploy.sh" ssh-ed25519 <key> folio-ci-deploy
+```
+
+so whatever a client asks for, sshd runs this script instead. The one request
+it accepts, as the whole command string, is
+
+```
+deploy <api|frontend> <sha: 7-40 lowercase hex> <host-files sha256: 64 lowercase hex>
+```
+
+with a short-lived Artifact Registry access token as the first line of stdin.
+It logs Docker in to Artifact Registry with a throwaway config, runs
+`deploy-runner.sh <sha> <service>` with a clean environment (nothing from the
+SSH session) and no stdin, deletes the config, and exits with
+`deploy-runner.sh`'s status. Anything else (a shell, any other command, sftp
+or scp, a request in any other shape) is refused before anything runs, and
+`restrict` rules out a PTY and port, agent and X11 forwarding. Both deploy
+workflows send a shell request first and stop unless it is refused.
+
+The last field is the sha256 of the host files concatenated in this order:
+`ci-deploy.sh`, `deploy-runner.sh`, `wait-healthy.sh`, `rollback.sh`,
+`docker-compose.yml`, `docker-compose.prod.yml`. The workflow computes it
+over its checkout, and the host refuses to deploy while its own copies hash
+differently. A change to any of them therefore waits for the owner to install
+it (next section) instead of deploying a new image against old compose files.
+
+Every decision is logged to the journal: `journalctl -t folio-ci-deploy`.
+
+Exit codes: `2` refused, with one of `rejected: unexpected command`,
+`rejected: host files differ from the workflow's checkout (host …, workflow …)`,
+`rejected: host files are missing` or `rejected: no registry token on stdin`
+on stderr; `1` registry login failed; otherwise `deploy-runner.sh`'s status,
+or 128+n when a signal ends it (a dropped SSH connection kills a running
+deploy, as it always has).
+
+Tests: `uvx pytest scripts/deploy/tests` (hermetic: stub `docker`, `logger`,
+`ssh` and `gcloud` on `PATH`, a temporary host layout, no daemon or network).
+They also run the two workflows' guard and deploy steps against the stubs,
+and they run on every pull request that touches these scripts or workflows
+(`.github/workflows/test-deploy-scripts.yml`).
+
+## Installing the host files
+
+CI can't write to the host, so the owner installs the host files with the
+owner's own admin SSH key (the `folio-prod` alias below), once the change
+that touches them has merged to `master` and while no deploy is running
+(`gh run list -R flowitup/folio`). Run it from the root of a clone of this
+repository. The files all come from one `master` commit, and each one is
+replaced by an atomic rename, so a script that is already running keeps
+reading its old copy. The two digests printed at the end, the host's and the
+local one, must be the same:
+
+```bash
+git fetch origin && ref=$(git rev-parse origin/master)
+files=(scripts/deploy/ci-deploy.sh scripts/deploy/deploy-runner.sh scripts/deploy/wait-healthy.sh
+       scripts/deploy/rollback.sh docker-compose.yml docker-compose.prod.yml)
+git archive "$ref" "${files[@]}" | ssh folio-prod 'set -e
+  s=$(mktemp -d); trap "rm -rf $s" EXIT; tar -x -C "$s"
+  for f in ci-deploy deploy-runner wait-healthy rollback; do
+    install -o root -g root -m 755 "$s/scripts/deploy/$f.sh" "/opt/folio/scripts/.$f.sh.new"
+    mv -f "/opt/folio/scripts/.$f.sh.new" "/opt/folio/scripts/$f.sh"
+  done
+  for f in docker-compose.yml docker-compose.prod.yml; do
+    install -o root -g root -m 644 "$s/$f" "/opt/folio/.$f.new"
+    mv -f "/opt/folio/.$f.new" "/opt/folio/$f"
+  done
+  cd /opt/folio && cat scripts/ci-deploy.sh scripts/deploy-runner.sh scripts/wait-healthy.sh \
+    scripts/rollback.sh docker-compose.yml docker-compose.prod.yml | sha256sum'
+for f in "${files[@]}"; do git show "$ref:$f"; done | sha256sum
+```
+
+A deploy refused with `host files differ` names both digests. Install the
+files, then re-run the failed job if it started after the change merged; a
+run that started earlier hashed the old files, so dispatch a new one from
+`master` instead.
+
 ## deploy/deploy-runner.sh
 
 Host-side deploy: pulls the new image from Artifact Registry, runs backend DB
 migrations, swaps the container(s) with `--no-deps`, then waits for health.
-Called over SSH by the parent's `deploy-backend.yml` / `deploy-frontend.yml`
-workflows, which log Docker in to Artifact Registry around the call.
+Run by `ci-deploy.sh` (above) for the parent's `deploy-backend.yml` /
+`deploy-frontend.yml` workflows, with a throwaway Docker config that holds
+the Artifact Registry login for that deploy only.
 
 ```bash
 /opt/folio/scripts/deploy-runner.sh <git-sha> <service>

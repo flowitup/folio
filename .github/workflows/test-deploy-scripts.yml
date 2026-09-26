@@ -1,0 +1,38 @@
+# Runs the hermetic tests of the host-side deploy scripts (scripts/deploy/tests):
+# ci-deploy.sh, the CI key's forced command and the only thing that key can
+# run on the prod host, plus the two deploy workflows' guard and deploy steps
+# that talk to it. No secrets, no Docker, no connection to any host.
+
+name: Test deploy scripts
+
+on:
+  pull_request:
+    paths:
+      - "scripts/deploy/**"
+      - ".github/workflows/deploy-*.yml"
+      - ".github/workflows/test-deploy-scripts.yml"
+      - "docker-compose.yml"
+      - "docker-compose.prod.yml"
+  push:
+    branches: [master]
+    paths:
+      - "scripts/deploy/**"
+      - ".github/workflows/deploy-*.yml"
+      - ".github/workflows/test-deploy-scripts.yml"
+      - "docker-compose.yml"
+      - "docker-compose.prod.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run the deploy-script tests
+        run: pipx run --spec pytest==9.1.1 pytest scripts/deploy/tests -q -p no:cacheprovider

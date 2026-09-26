@@ -7,9 +7,11 @@
 #   - workflow_dispatch with explicit version + sha (manual fallback).
 #
 # Flow: checkout submodule@<sha> → buildx → push api + ai-browser images to AR
-#   (tag <sha> + latest each) → SSH to Hetzner prod host → AR docker-login
-#   (short-lived WIF token) → /opt/folio/scripts/deploy-runner.sh <sha> api
-#   → smoke /health → (separate job) commit submodule pointer bump on master.
+#   (tag <sha> + latest each) → SSH to the Hetzner prod host with the CI key,
+#   whose only allowed request is `deploy api <sha> <host-files sha256>` (forced
+#   command /opt/folio/scripts/ci-deploy.sh, short-lived WIF token on stdin)
+#   → owner-installed deploy-runner.sh <sha> api → smoke /health → (separate
+#   job) commit submodule pointer bump on master.
 #
 # Host: Hetzner CX33 `folio-prod-1` (46.224.167.14) since the 2026-07-15
 # GCP→Hetzner migration. AR stays on GCP (image registry only).
@@ -195,8 +197,10 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend-browser
 
       - name: Setup SSH to prod host (Hetzner)
-        # Dedicated CI keypair (folio-ci-deploy). Host key pinned — a MITM or
-        # rebuilt server fails closed instead of prompting.
+        # Dedicated CI keypair (folio-ci-deploy). On the host it is restricted to
+        # one forced command, /opt/folio/scripts/ci-deploy.sh (see the next two
+        # steps). Host key pinned — a MITM or rebuilt server fails closed
+        # instead of prompting.
         env:
           SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
         run: |
@@ -207,59 +211,45 @@ jobs:
           echo "${PROD_HOST} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL3VjxZ2FCtovWWzZFNQvtNd4STB6qO8KSkEI62tkWOO" > ~/.ssh/known_hosts
           echo "SSH_OPTS=-i $HOME/.ssh/prod_ed25519 -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=20" >> "$GITHUB_ENV"
 
-      - name: Sync deploy bundle to VM
-        # Push parent's scripts/deploy/* and docker-compose*.yml onto the VM
-        # so /opt/folio/ always reflects parent master. Stage in a per-run
-        # tempdir to avoid collisions with leftover files from prior runs.
-        #
-        # All `${{ ... }}` interpolations are bound into env vars first and
-        # then referenced as shell `$VAR`s inside `run:` — dynamic values land
-        # in shell variables, never textually concatenated into the template.
-        # SSH user is root (Hetzner cloud default) — no sudo needed remotely.
-        env:
-          STAGE_DIR: /tmp/folio-deploy-${{ github.run_id }}
+      - name: Check the CI key is restricted on the host
+        # A shell request with this key must be refused by the forced command.
+        # If the host answers it any other way — the key lost its restriction,
+        # or the secret holds some other key — stop before the registry token
+        # or any request is sent.
         run: |
-          set -e
-          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" "rm -rf '${STAGE_DIR}' && mkdir -p '${STAGE_DIR}'"
-          scp $SSH_OPTS \
-            scripts/deploy/deploy-runner.sh \
-            scripts/deploy/wait-healthy.sh \
-            scripts/deploy/rollback.sh \
-            docker-compose.yml \
-            docker-compose.prod.yml \
-            "${PROD_SSH_USER}@${PROD_HOST}:${STAGE_DIR}/"
-          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" "
-            set -e
-            mkdir -p /opt/folio/scripts
-            install -o root -g root -m 755 '${STAGE_DIR}'/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
-            install -o root -g root -m 755 '${STAGE_DIR}'/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
-            install -o root -g root -m 755 '${STAGE_DIR}'/rollback.sh      /opt/folio/scripts/rollback.sh
-            install -o root -g root -m 644 '${STAGE_DIR}'/docker-compose.yml      /opt/folio/docker-compose.yml
-            install -o root -g root -m 644 '${STAGE_DIR}'/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
-            rm -rf '${STAGE_DIR}'
-            echo 'deploy bundle synced:'
-            ls -la /opt/folio/scripts/ /opt/folio/docker-compose*.yml
-          "
+          rc=0
+          out=$(ssh -T $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" </dev/null 2>&1) || rc=$?
+          if [ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -qx 'rejected: unexpected command'; then
+            echo "::notice::the host refused a shell request with the CI key: forced command in place"
+          else
+            echo "::error::a shell request with the CI key must be refused (exit 2, 'rejected: unexpected command'); got exit ${rc}"
+            exit 1
+          fi
 
-      - name: Deploy on VM (deploy-runner.sh)
-        # deploy-runner.sh handles: pull image → flask db upgrade → swap api+worker
-        # with --no-deps → wait-healthy.
+      - name: Deploy on VM (ci-deploy.sh → deploy-runner.sh)
+        # One request, `deploy api <sha> <host-files sha256>`, with a short-lived
+        # WIF access token on stdin — no service-account keys on the VM (org
+        # policy blocks key creation), token expires in ~1h. ci-deploy.sh logs
+        # Docker in with a throwaway config, runs the owner-installed
+        # deploy-runner.sh (pull image → flask db upgrade → swap api+worker with
+        # --no-deps → wait-healthy), then deletes the config.
         #
-        # AR pull auth: the runner mints a short-lived WIF access token and
-        # docker-logins on the host via stdin — no service-account keys on the
-        # VM (org policy blocks key creation), token expires in ~1h.
+        # The deploy scripts and compose files are installed on the host by the
+        # owner, never by CI (scripts/README.md, "Installing the host files").
+        # The sha256 covers them, in ci-deploy.sh's order: the host refuses to
+        # deploy while its copies differ from this checkout.
         #
-        # SHA is bound via env then referenced as '$SHA' inside quotes — even
-        # if the input regex widened, metachars land inside the quoted argv.
+        # SHA was validated as 7-40 lowercase hex above; the host checks the
+        # whole request against its own strict grammar again. The token is
+        # minted before connecting, so a gcloud failure fails this step
+        # directly instead of reaching the host as a missing token.
         env:
           SHA: ${{ steps.input.outputs.sha }}
         run: |
           set -e
-          gcloud auth print-access-token \
-            | ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" \
-                "docker login -u oauth2accesstoken --password-stdin ${REGION}-docker.pkg.dev"
-          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" \
-            "/opt/folio/scripts/deploy-runner.sh '${SHA}' api; rc=\$?; docker logout ${REGION}-docker.pkg.dev >/dev/null 2>&1 || true; exit \$rc"
+          host_files_sha256=$(cat scripts/deploy/ci-deploy.sh scripts/deploy/deploy-runner.sh scripts/deploy/wait-healthy.sh scripts/deploy/rollback.sh docker-compose.yml docker-compose.prod.yml | sha256sum | cut -d' ' -f1)
+          token=$(gcloud auth print-access-token)
+          printf '%s\n' "$token" | ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" "deploy api ${SHA} ${host_files_sha256}"
 
       - name: Smoke /health (assert 200 + JSON shape)
         # Cache-bust via ?_=<epoch> to defeat any accidental CF page rule.
