@@ -6,11 +6,12 @@
 #   - workflow_dispatch with explicit version + sha (manual fallback).
 #
 # Flow: checkout submodule@<sha> → buildx with NEXT_PUBLIC_API_BASE_URL baked
-#   → push to AR (tag <sha> + latest) → SSH to Hetzner prod host → AR
-#   docker-login (short-lived WIF token) →
-#   /opt/folio/scripts/deploy-runner.sh <sha> frontend → CF cache purge →
-#   smoke / (follows next-intl locale redirect) → (separate job) submodule
-#   pointer bump.
+#   → push to AR (tag <sha> + latest) → SSH to the Hetzner prod host with the
+#   CI key, whose only allowed request is `deploy frontend <sha> <host-files
+#   sha256>` (forced command /opt/folio/scripts/ci-deploy.sh, short-lived WIF
+#   token on stdin) → owner-installed deploy-runner.sh <sha> frontend → CF
+#   cache purge → smoke / (follows next-intl locale redirect) → (separate job)
+#   submodule pointer bump.
 #
 # Host: Hetzner CX33 `folio-prod-1` (46.224.167.14) since the 2026-07-15
 # GCP→Hetzner migration. AR stays on GCP (image registry only).
@@ -179,8 +180,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=frontend
 
       - name: Setup SSH to prod host (Hetzner)
-        # Dedicated CI keypair (folio-ci-deploy). Host key pinned — fails
-        # closed on MITM or a rebuilt server. See deploy-backend.yml.
+        # Dedicated CI keypair (folio-ci-deploy), restricted on the host to the
+        # forced command /opt/folio/scripts/ci-deploy.sh. Host key pinned —
+        # fails closed on MITM or a rebuilt server. See deploy-backend.yml.
         env:
           SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
         run: |
@@ -191,47 +193,31 @@ jobs:
           echo "${PROD_HOST} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL3VjxZ2FCtovWWzZFNQvtNd4STB6qO8KSkEI62tkWOO" > ~/.ssh/known_hosts
           echo "SSH_OPTS=-i $HOME/.ssh/prod_ed25519 -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes" >> "$GITHUB_ENV"
 
-      - name: Sync deploy bundle to VM
-        # Push parent's scripts/deploy/* and docker-compose*.yml onto the VM
-        # so /opt/folio/ always reflects parent master. Env-var binding
-        # rationale: see deploy-backend.yml. SSH user is root — no sudo.
-        env:
-          STAGE_DIR: /tmp/folio-deploy-${{ github.run_id }}
+      - name: Check the CI key is restricted on the host
+        # A shell request with this key must be refused by the forced command;
+        # otherwise stop before sending anything. See deploy-backend.yml.
         run: |
-          set -e
-          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" "rm -rf '${STAGE_DIR}' && mkdir -p '${STAGE_DIR}'"
-          scp $SSH_OPTS \
-            scripts/deploy/deploy-runner.sh \
-            scripts/deploy/wait-healthy.sh \
-            scripts/deploy/rollback.sh \
-            docker-compose.yml \
-            docker-compose.prod.yml \
-            "${PROD_SSH_USER}@${PROD_HOST}:${STAGE_DIR}/"
-          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" "
-            set -e
-            mkdir -p /opt/folio/scripts
-            install -o root -g root -m 755 '${STAGE_DIR}'/deploy-runner.sh /opt/folio/scripts/deploy-runner.sh
-            install -o root -g root -m 755 '${STAGE_DIR}'/wait-healthy.sh  /opt/folio/scripts/wait-healthy.sh
-            install -o root -g root -m 755 '${STAGE_DIR}'/rollback.sh      /opt/folio/scripts/rollback.sh
-            install -o root -g root -m 644 '${STAGE_DIR}'/docker-compose.yml      /opt/folio/docker-compose.yml
-            install -o root -g root -m 644 '${STAGE_DIR}'/docker-compose.prod.yml /opt/folio/docker-compose.prod.yml
-            rm -rf '${STAGE_DIR}'
-            echo 'deploy bundle synced:'
-            ls -la /opt/folio/scripts/ /opt/folio/docker-compose*.yml
-          "
+          rc=0
+          out=$(ssh -T $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" </dev/null 2>&1) || rc=$?
+          if [ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -qx 'rejected: unexpected command'; then
+            echo "::notice::the host refused a shell request with the CI key: forced command in place"
+          else
+            echo "::error::a shell request with the CI key must be refused (exit 2, 'rejected: unexpected command'); got exit ${rc}"
+            exit 1
+          fi
 
-      - name: Deploy on VM (deploy-runner.sh)
-        # AR pull auth via short-lived WIF token piped to docker login on the
-        # host — no SA keys on the VM. See deploy-backend.yml.
+      - name: Deploy on VM (ci-deploy.sh → deploy-runner.sh)
+        # One request, `deploy frontend <sha> <host-files sha256>`, with a
+        # short-lived WIF access token on stdin; the host refuses it while its
+        # owner-installed deploy files differ from this checkout. See
+        # deploy-backend.yml.
         env:
           SHA: ${{ steps.input.outputs.sha }}
         run: |
           set -e
-          gcloud auth print-access-token \
-            | ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" \
-                "docker login -u oauth2accesstoken --password-stdin ${REGION}-docker.pkg.dev"
-          ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" \
-            "/opt/folio/scripts/deploy-runner.sh '${SHA}' frontend; rc=\$?; docker logout ${REGION}-docker.pkg.dev >/dev/null 2>&1 || true; exit \$rc"
+          host_files_sha256=$(cat scripts/deploy/ci-deploy.sh scripts/deploy/deploy-runner.sh scripts/deploy/wait-healthy.sh scripts/deploy/rollback.sh docker-compose.yml docker-compose.prod.yml | sha256sum | cut -d' ' -f1)
+          token=$(gcloud auth print-access-token)
+          printf '%s\n' "$token" | ssh $SSH_OPTS "${PROD_SSH_USER}@${PROD_HOST}" "deploy frontend ${SHA} ${host_files_sha256}"
 
       - name: Purge Cloudflare edge cache
         # Required: /_next/static/* has 1-month edge TTL. Without purge, users
