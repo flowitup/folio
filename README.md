@@ -77,6 +77,36 @@ publishes a GitHub Release and sends `repository_dispatch` to this repo. A
 hand-pushed tag deploys nothing, and a PR labelled `version:none` is neither
 released nor deployed. No manual SSH needed.
 
+### Production host
+
+Hetzner CX33 `folio-prod-1` since 2026-07-15; the GCP VM it replaced was
+deleted (#39). GCP still holds the Artifact Registry images, Secret Manager,
+the backup bucket and the workflows' Workload Identity Federation login. The
+host has no `gcloud`: registry logins happen in the workflows or from a
+workstation, secrets are rendered on a workstation, and the backups reach GCS
+through `mc` with an HMAC key. SSH is `root@<prod-host>` (see Rollback).
+
+- `/opt/folio/` holds `.env` plus the compose files and `scripts/` that every
+  deploy syncs. The app images (`api`, which `worker` shares, `frontend` and
+  `ai-browser`) come from `europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/`.
+- HTTP comes in through a Cloudflare Tunnel (`cloudflared`, config
+  `/etc/cloudflared/config.yml`). Every origin it targets listens on
+  `127.0.0.1`:
+
+  | Hostname | Origin on the host |
+  |---|---|
+  | `folio.flowitup.com` — `/health`, `/api/*` | `localhost:5000` (api) |
+  | `folio.flowitup.com` — everything else | `localhost:3000` (frontend) |
+  | `cdn.flowitup.com` | `localhost:9000` (MinIO, presigned URLs) |
+  | `learn.flowitup.com` | `localhost:8080` (LearnFlow, served by Caddy — not part of this repo) |
+
+  The host is shared with LearnFlow: restarting `cloudflared` or taking port
+  8080 affects both sites.
+- Backups run from host cron (`/etc/cron.d/folio-backups`): `pg-dump.sh` at
+  03:00 and `minio-mirror.sh` at 03:30 UTC, into
+  `gs://flowitup-folio-prod-backups`. No restore test is scheduled — see
+  `scripts/README.md`.
+
 ### Trigger
 
 ```
@@ -250,7 +280,8 @@ SMS gateway:
 
 ## Docs
 
-Deployment runbooks, architecture notes, and code-standards docs are kept
+Architecture notes, code-standards docs and the older infra runbooks are kept
 outside this repository (private ops notes, not published to GitHub — see
-`.gitignore`). This README and `scripts/README.md` are the published
-operational reference for the parent repo.
+`.gitignore`); those infra runbooks (GCP bootstrap, Cloudflare setup) predate
+the Hetzner move. For deploys, rollback and backups, this README and
+`scripts/README.md` are the current reference.

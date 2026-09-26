@@ -116,8 +116,8 @@ that isn't the running container's OCI revision label. That is the previous
 release only when the running image is the newest build: after a deploy that
 failed before its swap, or after an earlier rollback, it returns the newer,
 broken build. The lookup needs `gcloud` with Artifact Registry read access on
-the host, and it fails for `worker` (there is no `worker` image; worker runs
-the `api` image).
+the host (the prod host has no `gcloud`, so there it always fails), and it
+fails for `worker` (there is no `worker` image; worker runs the `api` image).
 
 `api` also swaps `worker`, and `ai-browser` while `FEATURE_ASSISTANT=1`. With
 the assistant off, `ai-browser` is left as it is (deploy-runner removes it
@@ -133,46 +133,67 @@ previous tag found, or any failed step (`gcloud`, pull, `up`, health-wait);
 
 ## backup/install-backup-cron.sh
 
-Installs the cron schedule and logrotate config for the three backup
-scripts below. Run manually as root on the prod host (once, or again to
-update) — unlike the deploy scripts, this is **not** synced automatically
-by the GitHub Actions workflows, so `scripts/backup/*.sh` must be copied to
-`/opt/folio/scripts/backup/` on the host by hand first.
+Installs the two nightly backup jobs the way the prod host runs them: copies
+`pg-dump.sh` and `minio-mirror.sh` to `/usr/local/bin/` and writes
+`/etc/cron.d/folio-backups` (`pg-dump.sh` daily 03:00, `minio-mirror.sh`
+daily 03:30 — host time, which is UTC on the prod host). Run it as root on the
+host from a copy of `scripts/backup/` (once, or again to update). Unlike the
+deploy scripts, nothing here is synced by the GitHub Actions workflows, so the
+host only changes when someone re-runs it:
 
 ```bash
-/opt/folio/scripts/backup/install-backup-cron.sh   # as root
+scp scripts/backup/{install-backup-cron,pg-dump,minio-mirror}.sh root@<prod-host>:/root/
+ssh root@<prod-host> bash /root/install-backup-cron.sh
 ```
 
-Writes `/etc/cron.d/folio-backups` (`pg-dump.sh` daily 03:00,
-`minio-mirror.sh` daily 03:30, `verify-latest-dump.sh` Sundays 04:00 — host
-time, which is UTC on the prod host) and a matching
-`/etc/logrotate.d/folio-backups` for `/var/log/folio/*.log`.
+No log files or logrotate config: both jobs log through `logger`, so their
+status lines are in journald (`journalctl -t pg-dump -t minio-mirror`). It
+does not install `verify-latest-dump.sh` (see below).
 
-Exit codes: `1` not run as root, `2` one of the three backup scripts is
-missing or not executable at `/opt/folio/scripts/backup/`, `0` on success.
+The repo copies of `pg-dump.sh` and `minio-mirror.sh` are the ones on the host,
+and the installer's cron text matches the host's cron file (checked
+2026-09-26). To spot drift, compare
+`ssh root@<prod-host> sha256sum /usr/local/bin/pg-dump.sh /usr/local/bin/minio-mirror.sh`
+with `sha256sum scripts/backup/pg-dump.sh scripts/backup/minio-mirror.sh`, and
+`ssh root@<prod-host> cat /etc/cron.d/folio-backups` with the heredoc in
+`install-backup-cron.sh`.
+
+Exit codes: `1` not run as root, `2` `pg-dump.sh` or `minio-mirror.sh` is
+missing next to the installer (checked before anything is installed), `0` on
+success; any other failed step aborts non-zero (`set -euo pipefail`).
 
 ## backup/pg-dump.sh
 
 Nightly Postgres logical dump (`pg_dump -Fc`, custom format) streamed
-straight to GCS, with no temp file on disk. The upload impersonates
-`backup-sa` (`CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT`), which is meant to
-hold only object-create on the bucket: the upload identity can't list, read
-or delete earlier dumps, and a same-day re-run can't overwrite that day's key
-either.
+straight to GCS, with no temp file on disk: `docker exec` runs `pg_dump` in
+the Postgres container and pipes it into a throwaway `quay.io/minio/mc`
+container (`mc pipe`) that writes `pg-dumps/<UTC date>.dump` to the bucket.
+The host has no `gcloud`; the upload authenticates with `backup-sa`'s GCS HMAC
+key pair (`GCS_HMAC_ACCESS_KEY` / `GCS_HMAC_SECRET_KEY` in `/opt/folio/.env`).
+`backup-sa` can create, list and read objects in this bucket but not delete
+them, and the bucket has a 7-day retention period plus versioning:
+earlier dumps can't be removed or replaced, so a same-day re-run fails (exit
+`3`) instead of overwriting that day's dump.
 
-This does not protect backups from a compromised host: the host's credential
-can mint `backup-sa` tokens, `verify-latest-dump.sh` reads the bucket from the
-host, and `minio-mirror.sh` uses `backup-sa` HMAC keys stored in
-`/opt/folio/.env`.
+This does not protect backups from a compromised host: root there can read the
+HMAC pair from `/opt/folio/.env` (`minio-mirror.sh` uses the same pair) and
+with it list and download every dump and mirrored file in the bucket. It
+still can't delete them.
 
-Runs on the prod host from cron (installed by `install-backup-cron.sh`).
+Runs on the prod host as `/usr/local/bin/pg-dump.sh` from
+`/etc/cron.d/folio-backups` (in place since the 2026-07-15 move;
+`install-backup-cron.sh` reproduces it). A successful run logs
+`ok: uploaded pg-dumps/<date>.dump` to journald (tag `pg-dump`); the handled
+failures below log an `ERROR:` line first.
 
-Env vars: `PROJECT_ID` (default `flowitup-folio-prod`), `ENV_FILE` (default
-`/opt/folio/.env`, source of `POSTGRES_USER`/`POSTGRES_DB`), `BACKUP_BUCKET`
-(default `<PROJECT_ID>-backups`).
+Env vars: `ENV_FILE` (default `/opt/folio/.env`, source of `POSTGRES_USER`,
+`POSTGRES_DB` and the HMAC pair), `BACKUP_BUCKET` (default
+`flowitup-folio-prod-backups`).
 
-Exit codes: `1` env file unreadable or DB vars missing, `2` no running
-Postgres container found, `3` dump or upload failed, `0` success.
+Exit codes: `1` env file unreadable or one of those four values missing, `2`
+no running Postgres container found, `3` dump or upload failed, `0` success.
+Any other failing command (for example `docker ps` itself) aborts with its own
+status before a log line is written (`set -euo pipefail`).
 
 ## backup/minio-mirror.sh
 
@@ -181,9 +202,14 @@ directly, no disk staging). Refuses to mirror if the source object count
 drops by more than 5 % (100 − `DROP_THRESHOLD_PCT`) versus the last
 successful run, to stop a wiped or corrupted MinIO from propagating into the
 backup. It never passes `--remove`, so nothing is deleted from the
-destination; changed objects are overwritten (`--overwrite`), and older
-versions survive only through bucket versioning. Runs on the prod host via
-cron, installed by `install-backup-cron.sh`.
+destination. It does pass `--overwrite`, but `backup-sa` can't delete or
+replace objects (see `pg-dump.sh`), so an object that changes in MinIO under
+the same key would fail the run (exit `4`) every night rather than be
+overwritten; new objects are simply added. Runs on the prod host as
+`/usr/local/bin/minio-mirror.sh` from the same cron file. A successful run logs
+`ok: mirrored <N> objects` to journald (tag `minio-mirror`). The script's
+comment about `folio-render-env.service` is stale: no such unit exists on the
+host (see the root README, "Runtime secrets").
 
 Env vars: `PROJECT_ID`, `ENV_FILE` (default `/opt/folio/.env`, source of the
 S3/GCS HMAC credentials), `BACKUP_BUCKET`, `LAST_COUNT_FILE` (default
@@ -198,13 +224,18 @@ writing any log line.
 
 ## backup/verify-latest-dump.sh
 
-Weekly restore test: downloads the latest `pg-dump.sh` output, restores it
-into a throwaway `postgres:16-alpine` sidecar on `127.0.0.1:55432` (the port
-is fixed; the container name has a random suffix), then runs `SELECT 1`. That
+**Not installed on the prod host, so no restore test runs today.** It was
+written for the GCP VM: it lists and downloads the dumps with `gsutil` as that
+VM's own service account (`vm-runtime-sa`). The Hetzner host has neither
+`gsutil` nor that identity, so the script can't run there as is. Nothing has
+scheduled it since the 2026-07-15 move.
+
+What it does: downloads the latest `pg-dump.sh` output, restores it into a
+throwaway `postgres:16-alpine` sidecar on `127.0.0.1:55432` (the port is
+fixed; the container name has a random suffix), then runs `SELECT 1`. That
 proves the dump restores and the database answers, not that any particular
 table is intact. The sidecar and the local copy are removed whatever the
-outcome. Runs on the prod host via cron, installed by
-`install-backup-cron.sh`.
+outcome.
 
 Env vars: `PROJECT_ID`, `ENV_FILE` (default `/opt/folio/.env`, source of
 `POSTGRES_USER`/`POSTGRES_DB`), `BACKUP_BUCKET`, `WORK_DIR` (default
