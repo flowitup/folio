@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Phase 7 — weekly verification that latest pg_dump is actually restorable.
-# Runs ON THE VM via cron (Sun 04:00 UTC).
+# Weekly verification that latest pg_dump is actually restorable.
+#
+# NOT INSTALLED on the prod host (Hetzner folio-prod-1). Written for the GCP
+# VM: it reads the bucket with gsutil as that VM's own service account
+# (vm-runtime-sa). The Hetzner host has no gsutil/gcloud and no such
+# identity, so this cannot run there as is. Nothing schedules it since the
+# 2026-07-15 move (see install-backup-cron.sh) — no restore test runs today.
 #
 # Strategy:
 #   1. Download latest dump from gs://flowitup-folio-prod-backups/pg-dumps/
