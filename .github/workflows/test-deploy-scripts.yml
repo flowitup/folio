@@ -1,7 +1,8 @@
 # Runs the hermetic tests of the host-side deploy scripts (scripts/deploy/tests):
 # ci-deploy.sh, the CI key's forced command and the only thing that key can
 # run on the prod host, plus the two deploy workflows' guard and deploy steps
-# that talk to it. No secrets, no Docker, no connection to any host.
+# that talk to it and the way they take the caller's inputs. No secrets, no
+# Docker, no connection to any host.
 
 name: Test deploy scripts
 

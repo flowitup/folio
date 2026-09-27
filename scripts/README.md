@@ -100,8 +100,10 @@ deploy, as it always has).
 
 Tests: `uvx pytest scripts/deploy/tests` (hermetic: stub `docker`, `logger`,
 `ssh` and `gcloud` on `PATH`, a temporary host layout, no daemon or network).
-They also run the two workflows' guard and deploy steps against the stubs,
-and they run on every pull request that touches these scripts or workflows
+They also run the two workflows' guard and deploy steps against the stubs. They
+check that the dispatch payload and the manual inputs reach the workflows'
+scripts only through `env:`, and that hostile values are rejected without being
+run. They run on every pull request that touches these scripts or workflows
 (`.github/workflows/test-deploy-scripts.yml`).
 
 ## Installing the host files

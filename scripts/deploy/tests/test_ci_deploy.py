@@ -14,6 +14,9 @@ COLORTERM, NO_COLOR), because PermitUserEnvironment is off.
 ci-deploy.sh starts every child with `env -i`, so the stubs can't be told through the environment
 where to record their calls: each one finds the shared state directory from its own location.
 
+The last sections run the two deploy workflows' own steps, cut out of their YAML: the guard and
+the deploy request that reach this script, and the step that takes the caller's inputs.
+
 Run with: uvx pytest scripts/deploy/tests
 """
 
@@ -490,19 +493,49 @@ cat "$token"
 '''
 
 
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def workflow_steps(workflow: Path) -> dict[str, dict]:
+    """Every named step of the workflow: its `env:` mapping (values as written) and its `run:`
+    script (a `run: |` block dedented as the runner writes it out, or a one-line `run:` as is). A
+    reader for these workflows' plain YAML, where steps are `      - ` items with their keys 8
+    spaces in, not a general YAML parser."""
+    lines = workflow.read_text().splitlines()
+    starts = [i for i, line in enumerate(lines) if line.startswith("      - ")]
+    steps = {}
+    for n, start in enumerate(starts):
+        stop = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        block = [" " * 8 + lines[start][8:]] + lines[start + 1 : stop]  # the item's first key, re-indented
+        block = block[: next((j for j, line in enumerate(block) if line.strip() and _indent(line) < 8), len(block))]
+        name, env, run, key = None, {}, None, None
+        for line in block:
+            if line.strip() and _indent(line) == 8:
+                if line.lstrip().startswith("#"):
+                    continue
+                key, _, value = line.strip().partition(":")
+                if key == "name":
+                    name = value.strip()
+                elif key == "run" and value.strip() == "|":
+                    run = []
+                elif key == "run":
+                    run, key = [value.strip()], "run (one line)"
+            elif key == "env" and line.strip() and _indent(line) == 10:
+                var, _, value = line.strip().partition(":")
+                env[var] = value.strip()
+            elif key == "run":
+                run.append(line)
+        if name is not None:
+            steps[name] = {"env": env, "run": None if run is None else textwrap.dedent("\n".join(run))}
+    return steps
+
+
 def step_script(workflow: Path, step_name: str) -> str:
     """The `run: |` script of the named step, dedented as the runner writes it out."""
-    lines = workflow.read_text().splitlines()
-    start = next(i for i, line in enumerate(lines) if line.strip() == f"- name: {step_name}")
-    step_indent = len(lines[start]) - len(lines[start].lstrip())
-    run = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "run: |")
-    assert not any(line.strip().startswith("- name:") for line in lines[start + 1 : run]), "step has no run:"
-    body = []
-    for line in lines[run + 1 :]:
-        if line.strip() and len(line) - len(line.lstrip()) <= step_indent + 2:
-            break
-        body.append(line)
-    return textwrap.dedent("\n".join(body))
+    script = workflow_steps(workflow)[step_name]["run"]
+    assert script is not None, f"{step_name!r} has no run: script"
+    return script
 
 
 def run_step(tmp_path: Path, script: str, **env: str) -> tuple[subprocess.CompletedProcess, list[dict]]:
@@ -606,3 +639,97 @@ def test_workflow_reaches_the_host_only_through_the_guard_and_the_deploy_step(sv
     assert SSH_CALL.search(step_script(WORKFLOWS[svc], GUARD_STEP))
     assert SSH_CALL.search(step_script(WORKFLOWS[svc], DEPLOY_STEP))
     assert "scp " not in text and "rsync" not in text
+
+
+# Caller-chosen values: the repository_dispatch payload and the workflow_dispatch inputs, plus the
+# step and job outputs derived from them. They may reach a run: script only through env:. An
+# expression pasted into the script's text becomes shell code before any check can run.
+
+RESOLVE_STEP = "Resolve inputs (dispatch vs manual)"
+CALLER_EXPRESSION = re.compile(r"\$\{\{\s*(?:github\.event\.|inputs\.|steps\.[\w-]+\.outputs\.|needs\.[\w-]+\.outputs\.)")
+VERSION = "1.2.3"
+
+
+@pytest.mark.parametrize("svc", sorted(WORKFLOWS))
+def test_no_run_script_pastes_in_a_caller_chosen_value(svc):
+    steps = workflow_steps(WORKFLOWS[svc])
+    pasted = {name: CALLER_EXPRESSION.findall(step["run"]) for name, step in steps.items() if step["run"]}
+
+    assert {name: found for name, found in pasted.items() if found} == {}
+    assert RESOLVE_STEP in steps and len([s for s in steps.values() if s["run"]]) >= 8  # the reader saw the steps
+
+
+@pytest.mark.parametrize("svc", sorted(WORKFLOWS))
+def test_the_caller_chosen_values_are_bound_through_env(svc):
+    steps = workflow_steps(WORKFLOWS[svc])
+
+    assert steps[RESOLVE_STEP]["env"] == {
+        "EVENT_NAME": "${{ github.event_name }}",
+        "PAYLOAD_VERSION": "${{ github.event.client_payload.version }}",
+        "PAYLOAD_SHA": "${{ github.event.client_payload.sha }}",
+        "INPUT_VERSION": "${{ inputs.version }}",
+        "INPUT_SHA": "${{ inputs.sha }}",
+    }
+    for name in ("Verify version↔sha tag", "Notify on failure", "Summary"):
+        assert steps[name]["env"]["VERSION"] == "${{ steps.input.outputs.version }}", name
+        assert steps[name]["env"]["SHA"] == "${{ steps.input.outputs.sha }}", name
+
+
+def run_resolve(tmp_path: Path, svc: str, event: str, version: str, sha: str) -> tuple[subprocess.CompletedProcess, str]:
+    """Run the workflow's own Resolve step with the env its `env:` block would give it. The other
+    trigger's pair holds different valid values, so taking the wrong pair would show up."""
+    ours, other = ("PAYLOAD", "INPUT") if event == "repository_dispatch" else ("INPUT", "PAYLOAD")
+    outputs = tmp_path / "github-output"
+    result = subprocess.run(
+        ["bash", "-e", "-c", step_script(WORKFLOWS[svc], RESOLVE_STEP)],
+        env={
+            **os.environ,
+            "EVENT_NAME": event,
+            f"{ours}_VERSION": version,
+            f"{ours}_SHA": sha,
+            f"{other}_VERSION": "9.9.9",
+            f"{other}_SHA": "f" * 40,
+            "GITHUB_OUTPUT": str(outputs),
+            "MARKER": str(tmp_path / "pwned"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    return result, outputs.read_text() if outputs.exists() else ""
+
+
+@pytest.mark.parametrize("svc", sorted(WORKFLOWS))
+@pytest.mark.parametrize("event", ["repository_dispatch", "workflow_dispatch"])
+def test_resolve_step_passes_valid_values_through(tmp_path, svc, event):
+    result, outputs = run_resolve(tmp_path, svc, event, VERSION, SHA)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert outputs == f"version={VERSION}\nsha={SHA}\n"
+
+
+# Each value would run `touch "$MARKER"` if the shell ever parsed it as code; the last one would
+# forge a second workflow command if it were printed as it came.
+HOSTILE_VALUES = [
+    pytest.param('1.2.3"; touch "$MARKER"; echo "', id="quote-break"),
+    pytest.param('$(touch "$MARKER")', id="command-substitution"),
+    pytest.param('`touch "$MARKER"`', id="backticks"),
+    pytest.param(f"1.2.3\n::set-output name=sha::{'b' * 40}", id="newline-and-workflow-command"),
+]
+
+
+@pytest.mark.parametrize("svc", sorted(WORKFLOWS))
+@pytest.mark.parametrize("event", ["repository_dispatch", "workflow_dispatch"])
+@pytest.mark.parametrize("field", ["version", "sha"])
+@pytest.mark.parametrize("value", HOSTILE_VALUES)
+def test_resolve_step_rejects_a_hostile_value_without_running_it(tmp_path, svc, event, field, value):
+    version, sha = (value, SHA) if field == "version" else (VERSION, value)
+
+    result, outputs = run_resolve(tmp_path, svc, event, version, sha)
+
+    assert result.returncode != 0
+    assert not (tmp_path / "pwned").exists()
+    assert outputs == ""
+    commands = [line for line in result.stdout.splitlines() if line.startswith("::")]
+    assert len(commands) == 1 and commands[0].startswith(f"::error::invalid {field} "), result.stdout
