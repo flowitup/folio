@@ -79,16 +79,27 @@ jobs:
     steps:
       - name: Resolve inputs (dispatch vs manual)
         id: input
+        # The dispatch payload and the manual inputs are chosen by the caller,
+        # so they reach this script only as environment variables, never pasted
+        # into its text, and nothing uses them before they pass the checks. A
+        # rejected value is printed shell-escaped on one line, so it can't
+        # start a workflow command of its own.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PAYLOAD_VERSION: ${{ github.event.client_payload.version }}
+          PAYLOAD_SHA: ${{ github.event.client_payload.sha }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_SHA: ${{ inputs.sha }}
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            VERSION="${{ github.event.client_payload.version }}"
-            SHA="${{ github.event.client_payload.sha }}"
+          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            VERSION=$PAYLOAD_VERSION
+            SHA=$PAYLOAD_SHA
           else
-            VERSION="${{ inputs.version }}"
-            SHA="${{ inputs.sha }}"
+            VERSION=$INPUT_VERSION
+            SHA=$INPUT_SHA
           fi
-          [[ "$SHA" =~ ^[0-9a-f]{7,40}$ ]] || { echo "::error::invalid sha '$SHA'"; exit 1; }
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::invalid version '$VERSION'"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{7,40}$ ]] || { printf '::error::invalid sha %q\n' "$SHA"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { printf '::error::invalid version %q\n' "$VERSION"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "::notice::deploying api v$VERSION (sha $SHA)"
@@ -124,10 +135,10 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
         env:
           GH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.input.outputs.version }}
+          SHA: ${{ steps.input.outputs.sha }}
         run: |
           set -e
-          VERSION="${{ steps.input.outputs.version }}"
-          SHA="${{ steps.input.outputs.sha }}"
           tag_sha=$(gh api "repos/${{ env.SUBMODULE_REPO }}/commits/v${VERSION}" --jq .sha 2>/dev/null || true)
           if [ -z "$tag_sha" ]; then
             echo "::error::tag v${VERSION} does not exist on ${{ env.SUBMODULE_REPO }}"
@@ -273,23 +284,30 @@ jobs:
 
       - name: Notify on failure
         if: failure()
+        env:
+          VERSION: ${{ steps.input.outputs.version }}
+          SHA: ${{ steps.input.outputs.sha }}
         run: |
-          echo "::error::API deploy failed for v${{ steps.input.outputs.version }} (${{ steps.input.outputs.sha }})"
+          echo "::error::API deploy failed for v${VERSION} (${SHA})"
           echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
 
       - name: Summary
         if: always()
+        env:
+          VERSION: ${{ steps.input.outputs.version }}
+          SHA: ${{ steps.input.outputs.sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           {
             echo "## Deploy Backend — build"
             echo ""
             echo "| Field | Value |"
             echo "|---|---|"
-            echo "| Version | v${{ steps.input.outputs.version }} |"
-            echo "| SHA | \`${{ steps.input.outputs.sha }}\` |"
-            echo "| Trigger | ${{ github.event_name }} |"
-            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
-            echo "| Image (ai-browser) | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.BROWSER_IMAGE_NAME }}:${{ steps.input.outputs.sha }}\` |"
+            echo "| Version | v${VERSION} |"
+            echo "| SHA | \`${SHA}\` |"
+            echo "| Trigger | ${EVENT_NAME} |"
+            echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${SHA}\` |"
+            echo "| Image (ai-browser) | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.BROWSER_IMAGE_NAME }}:${SHA}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   bump-pointer:
