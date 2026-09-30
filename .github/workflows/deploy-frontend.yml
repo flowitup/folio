@@ -96,13 +96,13 @@ jobs:
           echo "::notice::deploying frontend v$VERSION (sha $SHA)"
 
       - name: Checkout parent (for deploy scripts + compose files)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 1
 
       - name: Checkout folio-front-end at SHA
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: ${{ env.SUBMODULE_REPO }}
           ref: ${{ steps.input.outputs.sha }}
@@ -302,7 +302,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout parent (with write credentials)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: true
           fetch-depth: 0
