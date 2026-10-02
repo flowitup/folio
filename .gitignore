@@ -11,9 +11,7 @@
 *.py[cod]
 
 # Claude Code / agent artifacts
-.claude/*
-!.claude/settings.json
-!.claude/hooks/
+.claude/
 plans/
 
 # Agent-generated feature artifacts
