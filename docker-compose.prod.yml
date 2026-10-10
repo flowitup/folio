@@ -7,7 +7,7 @@
 # What this changes:
 #  1. All published ports bound to 127.0.0.1 only (cloudflared reaches them via
 #     loopback). No 0.0.0.0 exposure even if the firewall slips. Red-team #10.
-#  2. db/redis ports REMOVED — only Docker network access from api/worker.
+#  2. db/redis ports REMOVED — only Docker network access from api.
 #  3. Credential env vars use ${VAR:?required} → compose ABORTS if any is unset.
 #     Defeats the dev-friendly :-default fallbacks that would otherwise leak
 #     to prod. Red-team #4.
@@ -94,90 +94,6 @@ services:
       - "S3_BUCKET=${S3_BUCKET:?required}"
       - "S3_REGION=${S3_REGION:?required}"
       - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
-      # Assistant AI feature (app/assistant BC, ai-browser container below).
-      # Switched OFF in prod: the code ships, but nothing answers @folio until
-      # FEATURE_ASSISTANT=1 AND DEEPSEEK_API_KEY + TYPESAFE_API_KEY are set in
-      # /opt/folio/.env (docs/assistant-runbook.md "Turning it on"); the next
-      # backend deploy then also starts ai-browser. Keys default to empty so
-      # compose never aborts without them.
-      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}"
-      - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
-      - "TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}"
-      - "GEMINI_API_KEY=${GEMINI_API_KEY:-}"
-      - "SCAN_MODE=${SCAN_MODE:-genai}"
-      - "JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}"
-      - "ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}"
-      - "BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}"
-      - "BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}"
-      - "BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}"
-
-  worker:
-    # Shared with api (Y5 — single Dockerfile, different command). Same SHA.
-    image: europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/api:${IMAGE_TAG:-latest}
-    pull_policy: always
-    environment:
-      - "DATABASE_URL=postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@db:5432/${POSTGRES_DB:?required}"
-      - "SECRET_KEY=${SECRET_KEY:?required}"
-      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?required}"
-      - "REDIS_URL=redis://redis:6379/0"
-      - "EMAIL_PROVIDER=${EMAIL_PROVIDER:?required}"
-      - "RESEND_API_KEY=${RESEND_API_KEY:?required}"
-      - "RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:?required}"
-      - "FROM_EMAIL=${RESEND_FROM_EMAIL:?required}"
-      - "FLASK_ENV=production"
-      # Assistant jobs run create_app() in this container, which refuses to boot in
-      # production with the default minioadmin S3 credentials — so the worker needs
-      # the same object-storage settings as `api`.
-      - "S3_ENDPOINT_URL=${S3_ENDPOINT_URL:?required}"
-      - "S3_ACCESS_KEY=${S3_ACCESS_KEY:?required}"
-      - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
-      - "S3_BUCKET=${S3_BUCKET:?required}"
-      - "S3_REGION=${S3_REGION:?required}"
-      - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
-      # Assistant AI feature — see `api` above, same rationale (worker runs
-      # the assistant RQ jobs the api routes enqueue, so it needs the same
-      # flags/keys).
-      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}"
-      - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
-      - "TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}"
-      - "GEMINI_API_KEY=${GEMINI_API_KEY:-}"
-      - "SCAN_MODE=${SCAN_MODE:-genai}"
-      - "JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}"
-      - "ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}"
-      - "BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}"
-      - "BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}"
-      - "BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}"
-
-  ai-browser:
-    # Built alongside api by deploy-backend.yml (second build-push step, same
-    # SHA tag) — see docker-compose.yml for what this container is and why
-    # it has no ports/healthcheck. pull_policy: always + IMAGE_TAG mirror the
-    # api service so deploy-runner.sh can swap it the same way.
-    image: europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/ai-browser:${IMAGE_TAG:-latest}
-    pull_policy: always
-    restart: unless-stopped
-    shm_size: 1g
-    # Lets the worker finish or requeue its current job on SIGTERM before Docker kills it.
-    stop_grace_period: 90s
-    volumes:
-      - ai_browser_profile:/app/profile
-      - ai_browser_data:/app/data
-    environment:
-      - "DATABASE_URL=postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@db:5432/${POSTGRES_DB:?required}"
-      - "REDIS_URL=redis://redis:6379/0"
-      - "S3_ENDPOINT_URL=${S3_ENDPOINT_URL:?required}"
-      - "S3_ACCESS_KEY=${S3_ACCESS_KEY:?required}"
-      - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
-      - "S3_BUCKET=${S3_BUCKET:?required}"
-      - "S3_REGION=${S3_REGION:?required}"
-      - "FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}"
-      - "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}"
-      - "TYPESAFE_API_KEY_CONFIGURED=${TYPESAFE_API_KEY:+1}"
-      - "ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}"
-      - "JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}"
-      - "BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}"
-      - "BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}"
-      - "BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}"
 
   db:
     ports: !reset []
