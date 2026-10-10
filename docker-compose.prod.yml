@@ -125,6 +125,15 @@ services:
       - "RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL:?required}"
       - "FROM_EMAIL=${RESEND_FROM_EMAIL:?required}"
       - "FLASK_ENV=production"
+      # Assistant jobs run create_app() in this container, which refuses to boot in
+      # production with the default minioadmin S3 credentials — so the worker needs
+      # the same object-storage settings as `api`.
+      - "S3_ENDPOINT_URL=${S3_ENDPOINT_URL:?required}"
+      - "S3_ACCESS_KEY=${S3_ACCESS_KEY:?required}"
+      - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
+      - "S3_BUCKET=${S3_BUCKET:?required}"
+      - "S3_REGION=${S3_REGION:?required}"
+      - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
       # Assistant AI feature — see `api` above, same rationale (worker runs
       # the assistant RQ jobs the api routes enqueue, so it needs the same
       # flags/keys).
