@@ -28,23 +28,6 @@ services:
       - S3_SECRET_KEY=${S3_SECRET_KEY:?required}
       - S3_BUCKET=${S3_BUCKET:?required}
       - S3_REGION=${S3_REGION:?required}
-      # Assistant AI feature (bounded context in this same backend, see
-      # docker-compose.prod.yml + README "Local development"). All defaults
-      # keep it dark: FEATURE_ASSISTANT=0 and every key empty, so a
-      # deployment that hasn't opted in behaves exactly as before this was
-      # added — GET /features only reports assistant:true once
-      # FEATURE_ASSISTANT=1 AND both DEEPSEEK_API_KEY and TYPESAFE_API_KEY
-      # are set.
-      - FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
-      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - SCAN_MODE=${SCAN_MODE:-genai}
-      - JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}
-      - ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}
-      - BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}
-      - BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}
-      - BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}
     depends_on:
       db:
         condition: service_healthy
@@ -78,75 +61,11 @@ services:
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASS=${SMTP_PASS:-}
-      # Assistant AI feature — same defaults/rationale as the `api` service
-      # above (kept identical so the assistant RQ jobs this worker runs see
-      # the same flags/keys as the routes that enqueue them).
-      - FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
-      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - SCAN_MODE=${SCAN_MODE:-genai}
-      - JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}
-      - ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}
-      - BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}
-      - BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}
-      - BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-
-  # Assistant "feature B" browser agent: signs into merchant sites with a
-  # persistent Chrome profile and downloads invoices/receipts on request.
-  # Same codebase as api/worker (Dockerfile.browser layers Chrome + xvfb on
-  # top), no HTTP port and no meaningful healthcheck endpoint — it polls the
-  # assistant_jobs table instead of serving requests, so it just needs to
-  # stay "running". Dark by default (FEATURE_ASSISTANT=0): the container
-  # starts and idles until the flag + keys are set and jobs are enqueued.
-  ai-browser:
-    # Assistant browser worker (feature B). Behind the "assistant" profile: a plain
-    # `docker compose up` skips it (the image bundles Chrome, ~2.5 GB); prod's
-    # deploy-runner exports COMPOSE_PROFILES=assistant. Its env is the minimum the
-    # worker reads (app/infrastructure/browser_worker/__main__.py): no SECRET_KEY,
-    # no other provider keys — it drives Chrome against third-party sites.
-    profiles: ["assistant"]
-    build:
-      context: ./folio-back-end
-      dockerfile: Dockerfile.browser
-    shm_size: 1g
-    # Lets the worker finish or requeue its current job on SIGTERM before Docker kills it.
-    stop_grace_period: 90s
-    restart: unless-stopped
-    volumes:
-      - ai_browser_profile:/app/profile
-      - ai_browser_data:/app/data
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    healthcheck:
-      disable: true
-    environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@db:5432/${POSTGRES_DB:?required}
-      - REDIS_URL=redis://redis:6379/0
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:?required}
-      - S3_ACCESS_KEY=${S3_ACCESS_KEY:?required}
-      - S3_SECRET_KEY=${S3_SECRET_KEY:?required}
-      - S3_BUCKET=${S3_BUCKET:?required}
-      - S3_REGION=${S3_REGION:?required}
-      - FEATURE_ASSISTANT=${FEATURE_ASSISTANT:-0}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
-      # Presence only ("1" or empty): the worker idles unless both keys exist, like /features.
-      - TYPESAFE_API_KEY_CONFIGURED=${TYPESAFE_API_KEY:+1}
-      - ASSISTANT_DAILY_COST_CAP_USD=${ASSISTANT_DAILY_COST_CAP_USD:-5}
-      - JOB_OFFPEAK_ONLY=${JOB_OFFPEAK_ONLY:-false}
-      - BROWSER_CHROME_PATH=${BROWSER_CHROME_PATH:-/usr/bin/google-chrome}
-      - BROWSER_PROFILE_DIR=${BROWSER_PROFILE_DIR:-/app/profile}
-      - BROWSER_DOWNLOADS_DIR=${BROWSER_DOWNLOADS_DIR:-/app/data/downloads}
 
   db:
     image: postgres:16-alpine
@@ -228,5 +147,3 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
-  ai_browser_profile:
-  ai_browser_data:

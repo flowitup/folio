@@ -1,13 +1,12 @@
-# Deploy backend (api + worker share image; ai-browser is a second image
-# built from the same source at the same SHA) to prod VM.
+# Deploy backend (api + worker share one image) to prod VM.
 #
 # Triggered by:
 #   - repository_dispatch (event_type: deploy-api) from folio-back-end's
 #     release job after it tags a new version.
 #   - workflow_dispatch with explicit version + sha (manual fallback).
 #
-# Flow: checkout submodule@<sha> → buildx → push api + ai-browser images to AR
-#   (tag <sha> + latest each) → SSH to the Hetzner prod host with the CI key,
+# Flow: checkout submodule@<sha> → buildx → push api image to AR
+#   (tags <sha> + latest) → SSH to the Hetzner prod host with the CI key,
 #   whose only allowed request is `deploy api <sha> <host-files sha256>` (forced
 #   command /opt/folio/scripts/ci-deploy.sh, short-lived WIF token on stdin)
 #   → owner-installed deploy-runner.sh <sha> api → smoke /health → (separate
@@ -52,7 +51,6 @@ env:
   REGION: europe-west1
   AR_REPO: folio
   IMAGE_NAME: api
-  BROWSER_IMAGE_NAME: ai-browser
   PROD_HOST: 46.224.167.14   # Hetzner folio-prod-1
   PROD_SSH_USER: root
   PROD_DOMAIN: folio.flowitup.com
@@ -62,9 +60,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # ai-browser layers Chrome + xvfb on top of the api image — bumped from
-    # 25 to give that second build room even on a cold cache.
-    timeout-minutes: 40
+    timeout-minutes: 25
     # Default-narrow: read-only on parent contents. The build step pulls
     # submodule source at an attacker-controlled SHA and runs it through
     # docker buildx; a build-time exfil of GITHUB_TOKEN therefore cannot
@@ -182,31 +178,6 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
-      - name: Build + push ai-browser image
-        # A failed side-car build must not block the api deploy: deploy-runner.sh
-        # tolerates a missing ai-browser image and keeps the previous container.
-        continue-on-error: true
-        # Same source (folio-back-end@<sha>), separate Dockerfile — adds
-        # Chrome + xvfb for the assistant's browser-automation container
-        # (docker-compose ai-browser service). No HTTP port, so this image
-        # is never health-checked here; deploy-runner.sh only waits for it
-        # to reach "running".
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
-        with:
-          context: ./src-be
-          file: ./src-be/Dockerfile.browser
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.BROWSER_IMAGE_NAME }}:${{ steps.input.outputs.sha }}
-            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.BROWSER_IMAGE_NAME }}:latest
-          labels: |
-            org.opencontainers.image.revision=${{ steps.input.outputs.sha }}
-            org.opencontainers.image.version=${{ steps.input.outputs.version }}
-            org.opencontainers.image.source=https://github.com/${{ env.SUBMODULE_REPO }}
-          cache-from: type=gha,scope=backend-browser
-          cache-to: type=gha,mode=max,scope=backend-browser
-
       - name: Setup SSH to prod host (Hetzner)
         # Dedicated CI keypair (folio-ci-deploy). On the host it is restricted to
         # one forced command, /opt/folio/scripts/ci-deploy.sh (see the next two
@@ -307,7 +278,6 @@ jobs:
             echo "| SHA | \`${SHA}\` |"
             echo "| Trigger | ${EVENT_NAME} |"
             echo "| Image | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${SHA}\` |"
-            echo "| Image (ai-browser) | \`${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.BROWSER_IMAGE_NAME }}:${SHA}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   bump-pointer:

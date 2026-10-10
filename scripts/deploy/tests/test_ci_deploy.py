@@ -307,7 +307,7 @@ CLIENT_ENV = {
     "DOCKER_HOST": "tcp://203.0.113.1:2375",
     "DOCKER_CONFIG": "/decoy-docker-config",
     "COMPOSE_FILE": "/decoy/compose.yaml",
-    "COMPOSE_PROFILES": "assistant",
+    "COMPOSE_PROFILES": "decoy",
     "COMPOSE_PROJECT_NAME": "decoy",
     "IMAGE_TAG": "latest",
 }
