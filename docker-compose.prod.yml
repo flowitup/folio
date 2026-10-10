@@ -64,6 +64,11 @@ services:
       # the phone's local server (http://<ip>:8080/message) or the cloud relay
       # (https://api.sms-gate.app/3rdparty/v1/messages); credentials are shown in the app.
       # Secret Manager: folio-sms-gateway-{url,username,password}.
+      # Mobile push notifications go out through Expo. Without PUSH_PROVIDER the API
+      # defaults to "log": every push is written to the log and nobody receives it.
+      # EXPO_ACCESS_TOKEN is only needed if the Expo project enforces push security.
+      - "PUSH_PROVIDER=${PUSH_PROVIDER:-expo}"
+      - "EXPO_ACCESS_TOKEN=${EXPO_ACCESS_TOKEN:-}"
       - "SMS_PROVIDER=gateway"
       - "SMS_GATEWAY_URL=${SMS_GATEWAY_URL:?required}"
       - "SMS_GATEWAY_USERNAME=${SMS_GATEWAY_USERNAME:?required}"
