@@ -42,27 +42,7 @@ services:
       retries: 3
       start_period: 10s
 
-  worker:
-    build:
-      context: ./folio-back-end
-      dockerfile: Dockerfile
-    command: python -m stack.queue.rq_worker
-    # Worker has no HTTP port — disable the inherited Dockerfile HEALTHCHECK
-    # (which curls localhost:5000/health and gets connection refused on the worker).
-    # RQ has no built-in healthcheck endpoint; container "running" is sufficient.
-    healthcheck:
-      disable: true
-    environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@db:5432/${POSTGRES_DB:?required}
-      - SECRET_KEY=${SECRET_KEY:?required}
-      - REDIS_URL=redis://redis:6379/0
-      - EMAIL_PROVIDER=${EMAIL_PROVIDER:?required}
-      - SMTP_HOST=${SMTP_HOST:-localhost}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASS=${SMTP_PASS:-}
-    depends_on:
-      db:
+  db:
         condition: service_healthy
       redis:
         condition: service_healthy

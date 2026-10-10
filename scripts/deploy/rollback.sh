@@ -14,8 +14,8 @@ SVC="${1:?usage: $0 <service> [<sha>]}"
 SHA="${2:-}"
 
 case "$SVC" in
-  api|frontend|worker) ;;
-  *) echo "rollback: invalid service '$SVC' (allowed: api, frontend, worker)" >&2; exit 2 ;;
+  api|frontend) ;;
+  *) echo "rollback: invalid service '$SVC' (allowed: api, frontend)" >&2; exit 2 ;;
 esac
 
 PROJECT_ID="${PROJECT_ID:-flowitup-folio-prod}"
@@ -50,14 +50,6 @@ COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-f
 
 "${COMPOSE[@]}" pull "$SVC"
 "${COMPOSE[@]}" up -d --no-deps "$SVC"
-if [[ "$SVC" == "api" ]]; then
-  # api shares its image with worker (Y5) — no separate pull needed, `up`
-  # reuses the image just pulled above.
-  "${COMPOSE[@]}" up -d --no-deps worker
-fi
 
 /opt/folio/scripts/wait-healthy.sh "$SVC"
-if [[ "$SVC" == "api" ]]; then
-  /opt/folio/scripts/wait-healthy.sh worker
-fi
 echo "[rollback] ok: $SVC@$SHA"

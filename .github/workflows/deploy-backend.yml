@@ -1,4 +1,4 @@
-# Deploy backend (api + worker share one image) to prod VM.
+# Deploy backend (api image) to prod VM.
 #
 # Triggered by:
 #   - repository_dispatch (event_type: deploy-api) from folio-back-end's
@@ -213,7 +213,7 @@ jobs:
         # WIF access token on stdin — no service-account keys on the VM (org
         # policy blocks key creation), token expires in ~1h. ci-deploy.sh logs
         # Docker in with a throwaway config, runs the owner-installed
-        # deploy-runner.sh (pull image → flask db upgrade → swap api+worker with
+        # deploy-runner.sh (pull image → flask db upgrade → swap api with
         # --no-deps → wait-healthy), then deletes the config.
         #
         # The deploy scripts and compose files are installed on the host by the

@@ -35,12 +35,6 @@ services:
       - FLASK_ENV=${FLASK_ENV:-development}
       - OTP_TEST_CODE=${OTP_TEST_CODE:-424242}
 
-  worker:
-    environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-construction}:${POSTGRES_PASSWORD:-construction}@db:5432/${POSTGRES_DB:-construction}
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
-      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-smtp}
-
   db:
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-construction}

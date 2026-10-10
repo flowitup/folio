@@ -52,7 +52,7 @@ per service, pass `--env-file /opt/folio/.env`, run migrations first and hold
 an Artifact Registry login. Don't run a bare
 `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` there.
 Every app service has `pull_policy: always` and `${IMAGE_TAG:-latest}`, so that
-command pulls `:latest` for api, worker and frontend alike (and `:latest` is
+command pulls `:latest` for api and frontend alike (and `:latest` is
 pushed by the last build even when that deploy failed), skips migrations, and
 fails without a registry login.
 
@@ -81,8 +81,7 @@ folio-back-end (or folio-front-end): PR merged to master, CI green
 ```
 
 `deploy-backend.yml` builds and pushes one image from the `folio-back-end`
-SHA: `api` (also runs `worker`). `deploy-runner.sh api` always swaps and
-health-waits `api`+`worker`.
+SHA: `api`. `deploy-runner.sh api` swaps and health-waits `api`.
 
 The CI key can do nothing on the host but that deploy request: its forced
 command, `ci-deploy.sh`, refuses a shell, any other command and file copies.
@@ -155,8 +154,7 @@ ssh root@<prod-host> \
 ```
 
 `<prod-host>` is `PROD_HOST` in `.github/workflows/deploy-backend.yml`; log in
-as `root` (no sudo). `rollback.sh api` also swaps `worker` (same image). Don't roll back `worker` on its own:
-it would run a different SHA than `api`. Logs are host-only
+as `root` (no sudo). Logs are host-only
 (`docker logs <container>`); there is no centralized log aggregation.
 
 After a hard rollback the parent submodule pointer is stale. Bump it back

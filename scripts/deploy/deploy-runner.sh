@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Phase 5 — VM-side deploy script. Called by CI via `gcloud compute ssh --tunnel-through-iap`.
-# Pulls the new image from Artifact Registry, runs migrations (api/worker only),
+# Pulls the new image from Artifact Registry, runs migrations (api only),
 # swaps the container with --no-deps so unrelated services aren't bounced, then
 # polls health.
 #
 # Invocation:
 #   /opt/folio/scripts/deploy-runner.sh <SHA> <SVC>
-# where SVC ∈ {api, frontend}; "api" also restarts "worker" (shared image, Y5).
+# where SVC ∈ {api, frontend}.
 set -euo pipefail
 
 SHA="${1:?usage: $0 <git-sha> <service>}"
@@ -32,12 +32,7 @@ log() { printf '[deploy-runner %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 log "pulling $SVC:$SHA"
 "${COMPOSE[@]}" pull "$SVC"
 
-# Worker shares the api image (Y5) — pull it together so step 3 can swap both.
-if [[ "$SVC" == "api" ]]; then
-  "${COMPOSE[@]}" pull worker
-fi
-
-# 2. Run DB migrations BEFORE swapping traffic. Api deploy only (worker shares schema).
+# 2. Run DB migrations BEFORE swapping traffic. Api deploy only.
 # NOTE: `flask db upgrade` assumes Flask-Migrate. If folio-back-end uses alembic
 # directly or a custom script, replace this command — see infra/gcp/README.md
 # Phase 5 "open verification" note.
@@ -48,17 +43,11 @@ if [[ "$SVC" == "api" ]]; then
   "${COMPOSE[@]}" run --rm -e FLASK_APP=app:create_app -e PGOPTIONS="-c lock_timeout=120s" api flask db upgrade
 fi
 
-# 3. Swap container(s) with --no-deps so dependencies (db/redis/minio) aren't bounced.
+# 3. Swap container with --no-deps so dependencies (db/redis/minio) aren't bounced.
 log "swapping container $SVC"
 "${COMPOSE[@]}" up -d --no-deps "$SVC"
-if [[ "$SVC" == "api" ]]; then
-  "${COMPOSE[@]}" up -d --no-deps worker
-fi
 
-# 4. Wait for health (handles worker no-healthcheck).
+# 4. Wait for health (services with no healthcheck count as healthy once running).
 /opt/folio/scripts/wait-healthy.sh "$SVC"
-if [[ "$SVC" == "api" ]]; then
-  /opt/folio/scripts/wait-healthy.sh worker
-fi
 
 log "deploy ok: $SVC@$SHA"
