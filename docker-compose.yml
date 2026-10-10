@@ -43,11 +43,6 @@ services:
       start_period: 10s
 
   db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  db:
     image: postgres:16-alpine
     environment:
       - POSTGRES_USER=${POSTGRES_USER:?required}
