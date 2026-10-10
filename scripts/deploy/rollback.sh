@@ -14,8 +14,8 @@ SVC="${1:?usage: $0 <service> [<sha>]}"
 SHA="${2:-}"
 
 case "$SVC" in
-  api|frontend|worker|ai-browser) ;;
-  *) echo "rollback: invalid service '$SVC' (allowed: api, frontend, worker, ai-browser)" >&2; exit 2 ;;
+  api|frontend) ;;
+  *) echo "rollback: invalid service '$SVC' (allowed: api, frontend)" >&2; exit 2 ;;
 esac
 
 PROJECT_ID="${PROJECT_ID:-flowitup-folio-prod}"
@@ -46,37 +46,10 @@ fi
 echo "[rollback] $SVC → $SHA"
 cd /opt/folio
 export IMAGE_TAG="$SHA"
-# ai-browser runs only while the assistant is switched on (see deploy-runner.sh).
-ASSISTANT_ON=0
-grep -qE '^FEATURE_ASSISTANT=1[[:space:]]*$' /opt/folio/.env && ASSISTANT_ON=1
-if [[ "$ASSISTANT_ON" == "1" ]]; then
-  export COMPOSE_PROFILES="${COMPOSE_PROFILES:-assistant}"
-fi
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file /opt/folio/.env)
 
 "${COMPOSE[@]}" pull "$SVC"
 "${COMPOSE[@]}" up -d --no-deps "$SVC"
-if [[ "$SVC" == "api" ]]; then
-  # api shares its image with worker (Y5) — no separate pull needed, `up`
-  # reuses the image just pulled above.
-  "${COMPOSE[@]}" up -d --no-deps worker
-  # ai-browser has its own image (built alongside api by the same CI run, same
-  # SHA tag) — needs its own pull before it can be swapped.
-  # A rollback target that predates the assistant has no ai-browser image:
-  # never let that abort the api/worker rollback already in flight.
-  if [[ "$ASSISTANT_ON" != "1" ]]; then
-    echo "[rollback] assistant switched off — ai-browser left stopped"
-  elif "${COMPOSE[@]}" pull ai-browser; then
-    "${COMPOSE[@]}" up -d --no-deps ai-browser
-  else
-    echo "[rollback] WARNING: ai-browser:$SHA not found — leaving ai-browser as is"
-  fi
-fi
 
 /opt/folio/scripts/wait-healthy.sh "$SVC"
-if [[ "$SVC" == "api" ]]; then
-  /opt/folio/scripts/wait-healthy.sh worker
-  # ai-browser serves no traffic: a sick side-car is a warning, not a failed rollback.
-  [[ "$ASSISTANT_ON" != "1" ]] || /opt/folio/scripts/wait-healthy.sh ai-browser || echo "[rollback] WARNING: ai-browser not healthy — check 'docker logs folio-ai-browser-1'"
-fi
 echo "[rollback] ok: $SVC@$SHA"

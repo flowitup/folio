@@ -22,7 +22,7 @@ phone-only sign-in:
    longer exists (sign-in is `otp/request` + `otp/verify` in
    `folio-back-end/app/api/v1/auth/routes.py`).
 
-What it does: starts folio-back-end's own `docker-compose.yml` (api, worker,
+What it does: starts folio-back-end's own `docker-compose.yml` (api,
 db, redis — not this repo's compose files), runs `flask db upgrade` and the
 seed, starts the frontend with `npm run dev` (installing `node_modules` and
 copying `.env.example` to `.env.local` if they're missing; on a remote
@@ -153,15 +153,8 @@ the Artifact Registry login for that deploy only.
 /opt/folio/scripts/deploy-runner.sh <git-sha> <service>
 ```
 
-`<service>` is `api` or `frontend`. `api` also restarts `worker` (shares the
-same image) and, only when `/opt/folio/.env` has `FEATURE_ASSISTANT=1`,
-`ai-browser` (own image, same SHA); when the flag is off, any running
-`ai-browser` is stopped and removed instead. `ai-browser` is stopped before
-migrations, which run with `lock_timeout=120s`: an earlier poller kept a
-`SELECT … FOR UPDATE` open on `assistant_jobs` and hung the v0.4.0 migration,
-and any lock that remains now fails the migration after two minutes instead
-of hanging the deploy. A failed/missing `ai-browser` pull or health-wait only
-warns — it never fails the `api`/`worker` deploy.
+`<service>` is `api` or `frontend`. Migrations run with `lock_timeout=120s`, so a lock held by another
+session fails the migration after two minutes instead of hanging the deploy.
 
 Exit codes: `2` invalid service or malformed SHA; any other failed step
 aborts the script non-zero (`set -euo pipefail`); `0` on success.
@@ -169,7 +162,7 @@ aborts the script non-zero (`set -euo pipefail`); `0` on success.
 ## deploy/wait-healthy.sh
 
 Polls a compose service's container until Docker reports it `healthy`, or
-just `running` for services with no healthcheck (e.g. `worker`). Called by
+just `running` for services with no healthcheck (e.g. `redis`). Called by
 `deploy-runner.sh` and `rollback.sh`; not invoked directly by CI.
 
 ```bash
@@ -195,19 +188,14 @@ schema changes; prefer rolling forward with a fix.
 /opt/folio/scripts/rollback.sh <service> [<sha>]
 ```
 
-`<service>` is one of `api`, `frontend`, `worker`, `ai-browser`. Always pass
+`<service>` is one of `api`, `frontend`. Always pass
 `<sha>`. Without it, the script lists the image's Artifact Registry tags
 (newest first, skipping `latest`/`stable`/`prod`) and takes the newest one
 that isn't the running container's OCI revision label. That is the previous
 release only when the running image is the newest build: after a deploy that
 failed before its swap, or after an earlier rollback, it returns the newer,
 broken build. The lookup needs `gcloud` with Artifact Registry read access on
-the host, and it fails for `worker` (there is no `worker` image; worker runs
-the `api` image).
-
-`api` also swaps `worker`, and `ai-browser` while `FEATURE_ASSISTANT=1`. With
-the assistant off, `ai-browser` is left as it is (deploy-runner removes it
-instead).
+the host.
 
 Env vars: `PROJECT_ID` (default `flowitup-folio-prod`), `REGION` (default
 `europe-west1`), `AR_REPO` (default `folio`) — used to build the Artifact

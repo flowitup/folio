@@ -46,23 +46,13 @@ EOF
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
-The stack includes an `ai-browser` service (assistant browser-automation
-container, `folio-back-end/Dockerfile.browser`) behind the `assistant`
-compose profile, so a plain `docker compose up` skips its ~2.5 GB Chrome
-image — add `--profile assistant` (or `COMPOSE_PROFILES=assistant`) to start
-it. `FEATURE_ASSISTANT=1` and `SCAN_MODE=opencv` are already the dev-overlay
-defaults for `api`/`worker`/`ai-browser` alike, but `DEEPSEEK_API_KEY` and
-`TYPESAFE_API_KEY` default to empty, so `GET /api/v1/features` (signed in)
-reports `assistant: false` until you export both. `GEMINI_API_KEY` is
-optional.
-
 Production runs the same compose files from `/opt/folio` on the host, but only
 through `deploy-runner.sh` and `rollback.sh`: they pin `IMAGE_TAG` to one SHA
 per service, pass `--env-file /opt/folio/.env`, run migrations first and hold
 an Artifact Registry login. Don't run a bare
 `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` there.
 Every app service has `pull_policy: always` and `${IMAGE_TAG:-latest}`, so that
-command pulls `:latest` for api, worker and frontend alike (and `:latest` is
+command pulls `:latest` for api and frontend alike (and `:latest` is
 pushed by the last build even when that deploy failed), skips migrations, and
 fails without a registry login.
 
@@ -90,14 +80,8 @@ folio-back-end (or folio-front-end): PR merged to master, CI green
   → commit submodule pointer bump on parent master
 ```
 
-`deploy-backend.yml` builds and pushes two images from the same
-`folio-back-end` SHA: `api` (also runs `worker`) and `ai-browser` (assistant
-browser-automation container). `deploy-runner.sh api` always swaps and
-health-waits `api`+`worker`. `ai-browser` only runs when `FEATURE_ASSISTANT=1`
-is set in `/opt/folio/.env` on the host (off by default in prod today); when
-it's off, deploy-runner stops and removes any running `ai-browser` instead of
-pulling the image. When it's on, a missing/failed `ai-browser` pull or
-health-wait only warns — it never aborts the api/worker deploy.
+`deploy-backend.yml` builds and pushes one image from the `folio-back-end`
+SHA: `api`. `deploy-runner.sh api` swaps and health-waits `api`.
 
 The CI key can do nothing on the host but that deploy request: its forced
 command, `ci-deploy.sh`, refuses a shell, any other command and file copies.
@@ -170,9 +154,7 @@ ssh root@<prod-host> \
 ```
 
 `<prod-host>` is `PROD_HOST` in `.github/workflows/deploy-backend.yml`; log in
-as `root` (no sudo). `rollback.sh api` also swaps `worker` (same image) and,
-while the assistant is on, `ai-browser`. Don't roll back `worker` on its own:
-it would run a different SHA than `api`. Logs are host-only
+as `root` (no sudo). Logs are host-only
 (`docker logs <container>`); there is no centralized log aggregation.
 
 After a hard rollback the parent submodule pointer is stale. Bump it back
@@ -229,9 +211,7 @@ run the frontend one too if its variables changed); that recreates the
 containers at that SHA with the new file.
 
 The rendered file also carries the backup scripts' `GCS_HMAC_ACCESS_KEY` and
-`GCS_HMAC_SECRET_KEY`, plus any optional flags. Write the assistant switch
-exactly as `FEATURE_ASSISTANT=1`, with no quotes or comment: deploy-runner
-greps for that line.
+`GCS_HMAC_SECRET_KEY`, plus any optional flags.
 
 Sign-in codes (phone-only login since 2026-09-11) go out through the Android
 SMS gateway:

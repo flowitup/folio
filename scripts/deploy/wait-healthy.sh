@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Phase 5 — poll a compose service until it's healthy (or 'running' with no
 # healthcheck declared). Empty Health.Status is treated as ok-if-running so
-# this works for the worker (compose has `healthcheck: disable: true`).
+# this works for services that disable their healthcheck.
 #
 # Invocation:
 #   /opt/folio/scripts/wait-healthy.sh <service>
