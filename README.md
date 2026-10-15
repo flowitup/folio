@@ -9,9 +9,17 @@ folio-front-end/  → Next.js 16 + next-intl + Tailwind + shadcn   (flowitup/fol
 scripts/          → ci-deploy, deploy-runner, rollback, host backups (see scripts/README.md)
 ```
 
-Both submodules are public repos; this umbrella repo is private. The mobile
-app (Expo, talks to the same API) lives in its own repo, not a submodule:
+All four repos are public on GitHub today: the two submodules, this umbrella
+repo and the mobile app (Expo, talks to the same API), which lives in its own
+repo, not a submodule:
 [flowitup/folio-mobile-app](https://github.com/flowitup/folio-mobile-app).
+Public means anyone can read the code, the deploy workflows and the whole git
+history, and can open a fork pull request that runs CI. No secret, key, token
+or customer data goes into git, in any file or any commit: a value that was
+committed once is public for good, even after the line is deleted or history
+is rewritten, so rotate it instead. Real values live in GitHub secrets and in
+Secret Manager. The `Secret scan` workflow checks the lines each push and pull
+request adds for credential-shaped text.
 
 Live: https://folio.flowitup.com
 
@@ -111,8 +119,11 @@ gh workflow run deploy-frontend.yml -R flowitup/folio \
   -f version=1.2.3 -f sha=<7-40-hex-sha>
 ```
 
-`version` must be the release whose tag `v<version>` points at `sha`;
-otherwise the run fails, so only released SHAs can be deployed. For the
+`version` must be the release whose tag `v<version>` points at `sha`, and
+`sha` must be on the sub-repo's `master`; otherwise the run fails, so only
+released SHAs can be deployed. A short SHA is expanded to the full one through
+the GitHub API before anything is built (`.github/scripts/verify-release.py`).
+Redeploying or rolling back to an older release works the same way. For the
 backend, a SHA older than the database's migration head fails at
 `flask db upgrade`; use `rollback.sh` instead (see Rollback). Dispatch from
 `master` (the default): a run from another branch hashes that branch's host
