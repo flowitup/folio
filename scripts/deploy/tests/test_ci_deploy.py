@@ -672,7 +672,24 @@ def test_the_caller_chosen_values_are_bound_through_env(svc):
     }
     for name in ("Verify version↔sha tag", "Notify on failure", "Summary"):
         assert steps[name]["env"]["VERSION"] == "${{ steps.input.outputs.version }}", name
-        assert steps[name]["env"]["SHA"] == "${{ steps.input.outputs.sha }}", name
+    # The verify step takes the request as sent; every later step carries the full SHA it resolved.
+    assert steps["Verify version↔sha tag"]["env"]["SHA"] == "${{ steps.input.outputs.sha }}"
+    for name in ("Notify on failure", "Summary"):
+        assert steps[name]["env"]["SHA"] == "${{ steps.release.outputs.sha || steps.input.outputs.sha }}", name
+    assert steps[DEPLOY_STEP]["env"]["SHA"] == "${{ steps.release.outputs.sha }}"
+
+
+# No run: script pastes any ${{ }} expression of its own: the caller-chosen ones are covered above, and
+# secrets and context values (github.*) are bound through env: as well, so none of them is ever shell text.
+ANY_CONTEXT_EXPRESSION = re.compile(r"\$\{\{\s*(?:secrets|github|inputs|steps|needs|matrix|vars)\b")
+
+
+@pytest.mark.parametrize("svc", sorted(WORKFLOWS))
+def test_no_run_script_pastes_in_a_secret_or_context_value(svc):
+    steps = workflow_steps(WORKFLOWS[svc])
+    pasted = {name: ANY_CONTEXT_EXPRESSION.findall(step["run"]) for name, step in steps.items() if step["run"]}
+
+    assert {name: found for name, found in pasted.items() if found} == {}
 
 
 def run_resolve(tmp_path: Path, svc: str, event: str, version: str, sha: str) -> tuple[subprocess.CompletedProcess, str]:
