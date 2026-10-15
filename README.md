@@ -19,7 +19,9 @@ or customer data goes into git, in any file or any commit: a value that was
 committed once is public for good, even after the line is deleted or history
 is rewritten, so rotate it instead. Real values live in GitHub secrets and in
 Secret Manager. The `Secret scan` workflow checks the lines each push and pull
-request adds for credential-shaped text.
+request adds, commit by commit, for credential-shaped text. It is advisory (a
+line can carry `secret-scan: allow`): it catches the careless commit, not a
+determined one.
 
 Live: https://folio.flowitup.com
 
@@ -123,7 +125,9 @@ gh workflow run deploy-frontend.yml -R flowitup/folio \
 `sha` must be on the sub-repo's `master`; otherwise the run fails, so only
 released SHAs can be deployed. A short SHA is expanded to the full one through
 the GitHub API before anything is built (`.github/scripts/verify-release.py`).
-Redeploying or rolling back to an older release works the same way. For the
+Redeploying or rolling back to an older release works the same way; if GitHub
+cannot compare a very old release with master the run fails (the error says what
+the API answered), and `rollback.sh` is the way back. For the
 backend, a SHA older than the database's migration head fails at
 `flask db upgrade`; use `rollback.sh` instead (see Rollback). Dispatch from
 `master` (the default): a run from another branch hashes that branch's host

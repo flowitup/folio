@@ -35,7 +35,8 @@ REPO_NAME = "flowitup/folio-back-end"
 
 STUB_GH = r'''#!/usr/bin/env python3
 """Stand-in for `gh`: answers `gh api <endpoint>` from ./responses.json ({endpoint: body}) and fails,
-as a 404 does, for an endpoint that is not in it. Records every endpoint asked for."""
+as a 404 does, for an endpoint that is not in it; a body {"gh_error": text} fails with that stderr.
+Records every endpoint asked for."""
 import json
 import sys
 from pathlib import Path
@@ -46,6 +47,9 @@ with (here / "gh.calls").open("a") as fh:
 responses = json.loads((here / "responses.json").read_text())
 if len(sys.argv) != 3 or sys.argv[1] != "api" or sys.argv[2] not in responses:
     sys.stderr.write("gh: Not Found (HTTP 404)\n")
+    sys.exit(1)
+if "gh_error" in responses[sys.argv[2]]:
+    sys.stderr.write(responses[sys.argv[2]]["gh_error"] + "\n")
     sys.exit(1)
 print(json.dumps(responses[sys.argv[2]]))
 '''
@@ -64,7 +68,7 @@ def genuine_release(sha: str = FULL, short: str | None = None) -> dict:
     }
 
 
-def run_verify(tmp_path: Path, responses: dict, sha: str = FULL, version: str = VERSION):
+def run_verify(tmp_path: Path, responses: dict, sha: str = FULL, version: str = VERSION, **env):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     gh = bin_dir / "gh"
@@ -81,6 +85,7 @@ def run_verify(tmp_path: Path, responses: dict, sha: str = FULL, version: str = 
             "VERSION": version,
             "SHA": sha,
             "GITHUB_OUTPUT": str(output),
+            **env,
         },
         capture_output=True,
         text=True,
@@ -244,6 +249,49 @@ def test_an_unreadable_master_branch_is_rejected(tmp_path):
     result, output, _ = run_verify(tmp_path, responses)
 
     assert_rejected(result, output, f"cannot read the master branch of {REPO_NAME}")
+
+
+FAKE_TOKEN = "fake-token-" + "0" * 12
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "message"),
+    [
+        pytest.param("commits/{sha}", "is not a commit of {repo}", id="commit"),
+        pytest.param("git/ref/tags/v{version}", "tag v{version} does not exist on {repo}", id="tag"),
+        pytest.param("branches/master", "cannot read the master branch of {repo}", id="master"),
+        pytest.param("compare/{tip}...{sha}", "is not on the master branch of {repo}", id="compare"),
+    ],
+)
+def test_a_failed_api_call_reports_what_github_said_and_still_fails_closed(tmp_path, endpoint, message):
+    responses = genuine_release()
+    key = f"repos/{REPO_NAME}/" + endpoint.format(sha=FULL, version=VERSION, tip=MASTER_TIP)
+    responses[key] = {"gh_error": f"gh: API rate limit exceeded for installation (HTTP 403) token={FAKE_TOKEN}"}
+
+    result, output, _ = run_verify(tmp_path, responses, GH_TOKEN=FAKE_TOKEN)
+
+    assert_rejected(result, output, message.format(sha=FULL, version=VERSION, repo=REPO_NAME))
+    assert "(GitHub API: gh: API rate limit exceeded for installation (HTTP 403) token=REDACTED)" in result.stdout
+    assert FAKE_TOKEN not in result.stdout + result.stderr
+
+
+def test_a_failed_api_call_with_no_message_reports_the_exit_status(tmp_path):
+    responses = genuine_release()
+    responses[f"repos/{REPO_NAME}/git/ref/tags/v{VERSION}"] = {"gh_error": ""}
+
+    result, output, _ = run_verify(tmp_path, responses)
+
+    assert_rejected(result, output, f"tag v{VERSION} does not exist on {REPO_NAME} (GitHub API: gh exited with status 1)")
+
+
+def test_an_answer_that_is_simply_wrong_carries_no_api_error(tmp_path):
+    responses = genuine_release()
+    responses[f"repos/{REPO_NAME}/git/ref/tags/v{VERSION}"]["ref"] = "refs/tags/other"
+
+    result, output, _ = run_verify(tmp_path, responses)
+
+    assert_rejected(result, output, f"tag v{VERSION} does not exist on {REPO_NAME}")
+    assert "GitHub API" not in result.stdout
 
 
 @pytest.mark.parametrize(
