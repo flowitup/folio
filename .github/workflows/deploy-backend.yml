@@ -70,7 +70,7 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      sha: ${{ steps.input.outputs.sha }}
+      sha: ${{ steps.release.outputs.sha }}
       version: ${{ steps.input.outputs.version }}
     steps:
       - name: Resolve inputs (dispatch vs manual)
@@ -108,44 +108,33 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
-      - name: Checkout folio-back-end at SHA
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          repository: ${{ env.SUBMODULE_REPO }}
-          ref: ${{ steps.input.outputs.sha }}
-          path: src-be
-          persist-credentials: false
-          # SUBMODULE_TOKEN is REQUIRED when the sibling repo is private —
-          # GITHUB_TOKEN cannot read other private repos in the org.
-          token: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
-          # Fetch tags so the version<->sha verify step can check tag points-at.
-          fetch-tags: true
-
       - name: Verify version↔sha tag
-        # Resolve the tag via the GitHub REST API and ensure the version in
-        # the payload actually points at the SHA being deployed. Runs on
-        # BOTH triggers: a leaked `repository_dispatch` token could otherwise
-        # invoke a deploy with an attacker-chosen SHA from any internal
-        # branch (the SHA-regex allows any 7-40 hex string, including ones
-        # that never made it to a signed release tag).
+        id: release
+        # Only a released commit may be built and deployed, on BOTH triggers: a
+        # leaked `repository_dispatch` token, or anyone who can run this workflow
+        # by hand, could otherwise name any commit or branch of the sub-repo.
+        # .github/scripts/verify-release.py asks the GitHub API for the full SHA
+        # (a short one is expanded), requires refs/tags/v<version> to point at it
+        # and requires it to be on the sub-repo's master. Everything below uses
+        # the full SHA from this step. Redeploying or rolling back to an older
+        # release still passes: its commit stays on master.
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
         env:
           GH_TOKEN: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.input.outputs.version }}
           SHA: ${{ steps.input.outputs.sha }}
-        run: |
-          set -e
-          tag_sha=$(gh api "repos/${{ env.SUBMODULE_REPO }}/commits/v${VERSION}" --jq .sha 2>/dev/null || true)
-          if [ -z "$tag_sha" ]; then
-            echo "::error::tag v${VERSION} does not exist on ${{ env.SUBMODULE_REPO }}"
-            exit 1
-          fi
-          if [ "$tag_sha" = "$SHA" ] || [[ "$SHA" == "$tag_sha"* ]] || [[ "$tag_sha" == "$SHA"* ]]; then
-            echo "::notice::tag v${VERSION} points at ${SHA} ✓ (resolved $tag_sha)"
-          else
-            echo "::error::tag v${VERSION} points at ${tag_sha} but caller passed ${SHA}"
-            exit 1
-          fi
+        run: python3 .github/scripts/verify-release.py
+
+      - name: Checkout folio-back-end at SHA
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          repository: ${{ env.SUBMODULE_REPO }}
+          ref: ${{ steps.release.outputs.sha }}
+          path: src-be
+          persist-credentials: false
+          # SUBMODULE_TOKEN is REQUIRED when the sibling repo is private —
+          # GITHUB_TOKEN cannot read other private repos in the org.
+          token: ${{ secrets.SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093  # v3.0.0
@@ -169,10 +158,10 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.input.outputs.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.release.outputs.sha }}
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
           labels: |
-            org.opencontainers.image.revision=${{ steps.input.outputs.sha }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.sha }}
             org.opencontainers.image.version=${{ steps.input.outputs.version }}
             org.opencontainers.image.source=https://github.com/${{ env.SUBMODULE_REPO }}
           cache-from: type=gha,scope=backend
@@ -226,7 +215,7 @@ jobs:
         # minted before connecting, so a gcloud failure fails this step
         # directly instead of reaching the host as a missing token.
         env:
-          SHA: ${{ steps.input.outputs.sha }}
+          SHA: ${{ steps.release.outputs.sha }}
         run: |
           set -e
           host_files_sha256=$(cat scripts/deploy/ci-deploy.sh scripts/deploy/deploy-runner.sh scripts/deploy/wait-healthy.sh scripts/deploy/rollback.sh docker-compose.yml docker-compose.prod.yml | sha256sum | cut -d' ' -f1)
@@ -257,16 +246,17 @@ jobs:
         if: failure()
         env:
           VERSION: ${{ steps.input.outputs.version }}
-          SHA: ${{ steps.input.outputs.sha }}
+          SHA: ${{ steps.release.outputs.sha || steps.input.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           echo "::error::API deploy failed for v${VERSION} (${SHA})"
-          echo "::error::Runbook: https://github.com/${{ github.repository }}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
+          echo "::error::Runbook: https://github.com/${REPOSITORY}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
 
       - name: Summary
         if: always()
         env:
           VERSION: ${{ steps.input.outputs.version }}
-          SHA: ${{ steps.input.outputs.sha }}
+          SHA: ${{ steps.release.outputs.sha || steps.input.outputs.sha }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           {

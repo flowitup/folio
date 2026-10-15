@@ -5,9 +5,14 @@
 # Dependabot opens PRs that bump the SHA pin AND update the `# vX.Y.Z`
 # trailing comment, so reviewers can verify against the action's release.
 #
-# Only `package-ecosystem: github-actions` is configured here. Submodule
-# repos (folio-back-end, folio-front-end) own their own language dependency
-# updates.
+# The compose files' images are watched too (`docker-compose`). This repo has
+# no Dockerfile and no Python or Node manifest of its own, so the `docker`, `pip`
+# and `npm` ecosystems would find nothing here; add them if such a file lands.
+# Submodule repos (folio-back-end, folio-front-end) own their own language
+# dependency updates. A compose bump is only a pull request: the compose files
+# are host files, so a merged one takes effect once the owner installs it
+# (scripts/README.md, "Installing the host files"). Major bumps are ignored: a
+# new postgres major cannot open the existing data directory.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -17,3 +22,14 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: chore(ci)
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: chore(deps)
