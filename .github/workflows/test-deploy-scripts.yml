@@ -2,7 +2,8 @@
 # ci-deploy.sh, the CI key's forced command and the only thing that key can
 # run on the prod host, plus the two deploy workflows' guard and deploy steps
 # that talk to it, the way they take the caller's inputs and the release check
-# (.github/scripts/verify-release.py) they run before building. No secrets, no
+# (.github/scripts/verify-release.py) they run before building, and the secret
+# scan of pushes and pull requests (.github/scripts/scan-secrets.py). No secrets, no
 # Docker, no connection to any host.
 
 name: Test deploy scripts
@@ -13,6 +14,7 @@ on:
       - "scripts/deploy/**"
       - ".github/workflows/deploy-*.yml"
       - ".github/scripts/**"
+      - ".github/workflows/secret-scan.yml"
       - ".github/workflows/test-deploy-scripts.yml"
       - "docker-compose.yml"
       - "docker-compose.prod.yml"
@@ -22,6 +24,7 @@ on:
       - "scripts/deploy/**"
       - ".github/workflows/deploy-*.yml"
       - ".github/scripts/**"
+      - ".github/workflows/secret-scan.yml"
       - ".github/workflows/test-deploy-scripts.yml"
       - "docker-compose.yml"
       - "docker-compose.prod.yml"
