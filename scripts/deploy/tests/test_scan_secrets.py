@@ -155,6 +155,47 @@ def test_added_lines_shaped_like_headers_do_not_redirect_the_following_findings(
     assert "::error file=a.txt,line=3::Slack token added" in result.stdout
 
 
+@pytest.mark.parametrize("sep", ["\u2028", "\x0b", "\x0c", "\x1c", "\u0085", "\r"])
+def test_a_line_separator_inside_an_added_line_does_not_hide_the_next_line(repo, sep):
+    # str.splitlines() would cut 'x<sep>+y' in two added lines, end the hunk early and skip the key line.
+    commit(repo, {"a.txt": f"x{sep}+y\nk = '{FAKE['AWS access key id']}'\n"})
+
+    result = scan(repo)
+
+    assert result.returncode == 1, result.stdout
+    assert "::error file=a.txt,line=2::AWS access key id added" in result.stdout
+
+
+@pytest.mark.parametrize("sep", ["\r", "\x0c", "\u2028"])
+def test_a_credential_after_a_line_separator_inside_an_added_line_is_found(repo, sep):
+    commit(repo, {"a.txt": f"pad{sep}K = '{FAKE['AWS access key id']}'\n"})
+
+    result = scan(repo)
+
+    assert result.returncode == 1, result.stdout
+    assert "::error file=a.txt,line=1::AWS access key id added" in result.stdout
+
+
+def test_a_binary_attribute_does_not_hide_the_added_lines(repo):
+    commit(repo, {".gitattributes": "* -diff\n", "a.txt": f"K = '{FAKE['private key']}'\n"})
+
+    result = scan(repo)
+
+    assert result.returncode == 1, result.stdout
+    assert "::error file=a.txt,line=1::private key added" in result.stdout
+
+
+def test_a_nul_byte_does_not_hide_the_added_lines(repo):
+    (repo / "b.bin").write_bytes(b"\x00\n" + FAKE["GitHub token"].encode() + b"\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "change")
+
+    result = scan(repo)
+
+    assert result.returncode == 1, result.stdout
+    assert "::error file=b.bin,line=2::GitHub token added" in result.stdout
+
+
 def test_a_finding_is_reported_once_when_commits_and_net_diff_both_show_it(repo):
     commit(repo, {"a.py": f"KEY = '{FAKE['AWS access key id']}'\n"})
 

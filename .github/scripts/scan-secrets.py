@@ -26,27 +26,30 @@ RULES = {
 }
 ALLOW = "secret-scan: allow"
 HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-DIFF_ARGS = ["--no-color", "--unified=0", "--no-renames", "--no-prefix", "--no-ext-diff", "--no-textconv"]
+DIFF_ARGS = ["--no-color", "--unified=0", "--no-renames", "--no-prefix", "--no-ext-diff", "--no-textconv", "--text"]
 
 
 def git_output(*args: str) -> str:
-    return subprocess.run(["git", *args], capture_output=True, text=True, errors="replace", check=True).stdout
+    # Bytes, not text=True: no newline translation, so a lone '\r' stays inside its line.
+    return subprocess.run(["git", *args], capture_output=True, check=True).stdout.decode(errors="replace")
 
 
 def parse_diff(diff: str):
     """(path, line number, text) of every added line of a unified diff (any number of files and commits)."""
     path, number, old_left, new_left = None, 0, 0, 0
-    for line in diff.splitlines():
-        if old_left or new_left:
+    # Only '\n' ends a line of a diff: str.splitlines() also splits on U+2028, '\x0c' and the like, which
+    # would miscount the lines of a hunk.
+    for line in diff.split("\n"):
+        if old_left > 0 or new_left > 0:
             # Inside a hunk the header's line counts say what is left, so a removed or added line that
             # itself starts with '-- ' or '++ ' is content and never taken for a file header.
             if line.startswith("+"):
-                new_left -= 1
+                new_left = max(new_left - 1, 0)
                 if path:
                     yield path, number, line[1:]
                 number += 1
             elif line.startswith("-"):
-                old_left -= 1
+                old_left = max(old_left - 1, 0)
             continue
         if line.startswith("+++ "):
             # Git quotes an unusual file name, so the header is read whole, not matched on a pattern.
