@@ -116,6 +116,71 @@ def test_the_scan_covers_every_commit_between_base_and_head(repo):
     assert "::error file=a.py,line=1::AWS access key id added" in result.stdout
 
 
+def test_a_credential_added_then_removed_by_a_later_commit_is_still_found(repo):
+    # The net diff BASE..HEAD is clean, but the key sits in the public history of the push.
+    commit(repo, {"a.py": f"KEY = '{FAKE['GitHub token']}'\n"})
+    commit(repo, {"a.py": "KEY = None\n"})
+
+    result = scan(repo, base="HEAD~2")
+
+    assert result.returncode == 1, result.stdout
+    assert "::error file=a.py,line=1::GitHub token added" in result.stdout
+    assert FAKE["GitHub token"] not in result.stdout + result.stderr
+
+
+def test_a_credential_in_a_commit_already_before_the_base_stays_out_of_scope(repo):
+    commit(repo, {"a.py": f"KEY = '{FAKE['GitHub token']}'\n"})
+    commit(repo, {"a.py": "KEY = None\n"})
+
+    assert scan(repo).returncode == 0
+
+
+@pytest.mark.parametrize("prefix", ["++ ", "+++ ", "-- ", "++"])
+def test_an_added_line_that_looks_like_a_diff_header_is_scanned(repo, prefix):
+    # The diff shows the line as '+' + text: '+++ b' or '+++ /dev/null' must not be read as a file header.
+    commit(repo, {"a.txt": f"ok\n{prefix}{FAKE['private key']}\n"})
+
+    result = scan(repo)
+
+    assert result.returncode == 1, result.stdout
+    assert "::error file=a.txt,line=2::private key added" in result.stdout
+
+
+def test_added_lines_shaped_like_headers_do_not_redirect_the_following_findings(repo):
+    commit(repo, {"a.txt": f"++ /dev/null\n+++ b/other.txt\nTOKEN = '{FAKE['Slack token']}'\n"})
+
+    result = scan(repo)
+
+    assert result.returncode == 1
+    assert "::error file=a.txt,line=3::Slack token added" in result.stdout
+
+
+def test_a_finding_is_reported_once_when_commits_and_net_diff_both_show_it(repo):
+    commit(repo, {"a.py": f"KEY = '{FAKE['AWS access key id']}'\n"})
+
+    result = scan(repo)
+
+    assert len([line for line in result.stdout.splitlines() if line.startswith("::error")]) == 1
+
+
+def test_a_missing_base_commit_falls_back_to_the_net_diff(repo):
+    commit(repo, {"a.py": f"KEY = '{FAKE['AWS access key id']}'\n"})
+    empty_tree = git(repo, "hash-object", "-t", "tree", "/dev/null")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=repo,
+        env={**os.environ, "BASE": empty_tree},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "AWS access key id added" in result.stdout
+
+
 def test_an_unusual_file_name_does_not_hide_a_finding(repo):
     commit(repo, {'dir/we"ird\tname.py': f"KEY = '{FAKE['Slack token']}'\n"})
 
