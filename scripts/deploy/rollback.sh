@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5 — manual rollback. Run on the VM (or via gcloud compute ssh).
+# Manual rollback. Run on the prod host over the owner's admin SSH (README.md, Rollback).
 # Pulls a specific SHA tag from Artifact Registry and restarts the service.
 # Does NOT run migrations — rolling back code with a forward-only schema is
 # risky; prefer rolling FORWARD with a fix. If you must roll back schema,
