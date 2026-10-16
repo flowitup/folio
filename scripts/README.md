@@ -230,7 +230,8 @@ missing or not executable at `/opt/folio/scripts/backup/`, `0` on success.
 Daily janitor. Deleting a document, photo/video or analysis in the app only
 hides it (soft delete); this job erases the rows and their MinIO objects
 (original, thumbnail/poster) once they have been deleted for
-`RETENTION_DAYS` (default 30). It runs `scripts/purge_soft_deleted_files.py`
+`RETENTION_DAYS` (default 30), plus presigned document uploads that were
+never confirmed (no row owns the object) once a day old. It runs `scripts/purge_soft_deleted_files.py`
 inside the running `api` container (`docker compose exec -T api`), before the
 03:30 mirror so erased files also leave the GCS copy. Env vars:
 `RETENTION_DAYS`, `COMPOSE_DIR` (default `/opt/folio`), `ENV_FILE`.
