@@ -1,8 +1,9 @@
 # Production override — applied on top of docker-compose.yml.
 #
-# Usage on the VM:
-#   cd /opt/folio
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Do not run directly; use scripts/deploy/deploy-runner.sh or
+# scripts/deploy/rollback.sh. They pin IMAGE_TAG per service, pass
+# --env-file /opt/folio/.env and run migrations first. A bare
+# `docker compose ... up -d` pulls :latest and skips migrations (README.md).
 #
 # What this changes:
 #  1. All published ports bound to 127.0.0.1 only (cloudflared reaches them via
@@ -79,12 +80,34 @@ services:
       # SMS and skips the throttle, /otp/verify accepts OTP_REVIEWER_CODE — for
       # that number only. Every other phone still needs its real SMS code, and
       # the fixed code is rejected for them (app/application/usecases/otp_login.py
-      # _reviewer_code_for). Set BOTH or NEITHER: config validation rejects half a
-      # configuration rather than half-enabling the bypass. Empty defaults on
-      # purpose, so clearing the secrets after a review cannot break a deploy.
+      # _reviewer_code_for). Set BOTH or NEITHER: the API refuses to boot on half a
+      # configuration or a code that is not 6 digits (validate_boot_settings).
+      # Empty defaults on purpose, so clearing the secrets after a review cannot
+      # break a deploy.
       # Secret Manager: folio-otp-reviewer-{phone,code}.
       - "OTP_REVIEWER_PHONE=${OTP_REVIEWER_PHONE:-}"
       - "OTP_REVIEWER_CODE=${OTP_REVIEWER_CODE:-}"
+      # Optional tuning. Each default below is the API's own default
+      # (folio-back-end config/__init__.py), so an unset key changes nothing and
+      # the order of compose and image deploys does not matter. The API refuses
+      # to boot on a malformed value.
+      # Minimum app version (x.y.z) per platform; when one is set, its
+      # APP_UPDATE_URL_* must be the https store listing. Empty = no forced update.
+      - "APP_MIN_VERSION_IOS=${APP_MIN_VERSION_IOS:-}"
+      - "APP_MIN_VERSION_ANDROID=${APP_MIN_VERSION_ANDROID:-}"
+      - "APP_UPDATE_URL_IOS=${APP_UPDATE_URL_IOS:-}"
+      - "APP_UPDATE_URL_ANDROID=${APP_UPDATE_URL_ANDROID:-}"
+      - "PUSH_LOCALE=${PUSH_LOCALE:-vi}"
+      - "REFRESH_TOKEN_POLICY=${REFRESH_TOKEN_POLICY:-expiring}"
+      - "OTP_TTL_SECONDS=${OTP_TTL_SECONDS:-300}"
+      - "OTP_RESEND_SECONDS=${OTP_RESEND_SECONDS:-60}"
+      - "OTP_HOURLY_MAX=${OTP_HOURLY_MAX:-5}"
+      - "OTP_MAX_ATTEMPTS=${OTP_MAX_ATTEMPTS:-5}"
+      - "SMS_GLOBAL_MAX_PER_10MIN=${SMS_GLOBAL_MAX_PER_10MIN:-60}"
+      - "SMS_GLOBAL_MAX_PER_DAY=${SMS_GLOBAL_MAX_PER_DAY:-400}"
+      - "SMS_OPEN_MAX_PER_10MIN=${SMS_OPEN_MAX_PER_10MIN:-30}"
+      - "SMS_OPEN_MAX_PER_DAY=${SMS_OPEN_MAX_PER_DAY:-150}"
+      - "SMS_SEND_IP_LIMITS=${SMS_SEND_IP_LIMITS:-20 per hour;60 per day}"
       # Team chat (app/api/v1/chat, config/__init__.py FEATURE_CHAT — default off).
       # Gates every chat route and the `chat` flag returned by GET /api/v1/features,
       # which the web widget and the mobile chat tab read before showing themselves.
@@ -127,4 +150,8 @@ services:
     environment:
       - "NODE_ENV=production"
       - "API_INTERNAL_BASE_URL=${API_INTERNAL_BASE_URL:?required}"
-      - "NEXT_PUBLIC_S3_PUBLIC_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
+      # No NEXT_PUBLIC_S3_PUBLIC_URL here: it is inlined at build time
+      # (deploy-frontend.yml), so a runtime value would be ignored. The build
+      # takes the repository variable S3_PUBLIC_ENDPOINT_URL, else
+      # https://s3.<PROD_DOMAIN>; keep it equal to S3_PUBLIC_ENDPOINT_URL in
+      # /opt/folio/.env, which the API and MinIO use.

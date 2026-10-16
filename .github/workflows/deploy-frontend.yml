@@ -24,7 +24,7 @@
 # contents:write that runs only after build succeeds.
 #
 # Plan: plans/260503-0913-parent-auto-deploy-on-version-bump/phase-02-...md
-# Runbook: docs/deployment-guide.md §3.1, §4.1
+# Runbook: README.md (Deploys, Rollback) and scripts/README.md
 
 name: Deploy Frontend
 
@@ -166,7 +166,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             NEXT_PUBLIC_API_BASE_URL=https://${{ env.PROD_DOMAIN }}/api/v1
-            NEXT_PUBLIC_S3_PUBLIC_URL=https://s3.${{ env.PROD_DOMAIN }}
+            NEXT_PUBLIC_S3_PUBLIC_URL=${{ vars.S3_PUBLIC_ENDPOINT_URL || format('https://s3.{0}', env.PROD_DOMAIN) }}
           tags: |
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:${{ steps.release.outputs.sha }}
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
@@ -265,7 +265,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           echo "::error::Frontend deploy failed for v${VERSION} (${SHA})"
-          echo "::error::Runbook: https://github.com/${REPOSITORY}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
+          echo "::error::Runbook: https://github.com/${REPOSITORY}/blob/master/README.md#rollback"
 
       - name: Summary
         if: always()

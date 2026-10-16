@@ -24,7 +24,7 @@
 # the write-scoped token.
 #
 # Plan: plans/260503-0913-parent-auto-deploy-on-version-bump/phase-01-...md
-# Runbook: docs/deployment-guide.md §3.1, §4.1
+# Runbook: README.md (Deploys, Rollback) and scripts/README.md
 
 name: Deploy Backend
 
@@ -250,7 +250,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           echo "::error::API deploy failed for v${VERSION} (${SHA})"
-          echo "::error::Runbook: https://github.com/${REPOSITORY}/blob/master/docs/deployment-guide.md#41-site-down--first-5-minutes"
+          echo "::error::Runbook: https://github.com/${REPOSITORY}/blob/master/README.md#rollback"
 
       - name: Summary
         if: always()

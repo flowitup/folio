@@ -2,13 +2,14 @@
 # Phase 7 — daily Postgres logical dump → GCS.
 # Runs ON THE VM via cron at 03:00 UTC. Impersonates backup-sa (append-only).
 #
-# Idempotent within a day: same DATE key overwrites (Postgres versioning on
-# bucket retains the previous version for 30 days).
+# One object per UTC day. backup-sa may only create objects, so a same-day
+# re-run cannot overwrite that day's dump; it fails with exit 3 instead.
 #
 # Failure modes:
 #   - postgres container not running  → exit 2, log
-#   - pg_dump fails                    → exit 3, log
-#   - gsutil upload fails              → exit 4, log (token expiry, network, quota)
+#   - env file unreadable / DB vars    → exit 1, log
+#   - pg_dump or upload fails          → exit 3, log (token expiry, network,
+#                                         quota, or the day's key already exists)
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-flowitup-folio-prod}"
