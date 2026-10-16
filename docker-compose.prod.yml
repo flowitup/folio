@@ -121,7 +121,11 @@ services:
       - "S3_SECRET_KEY=${S3_SECRET_KEY:?required}"
       - "S3_BUCKET=${S3_BUCKET:?required}"
       - "S3_REGION=${S3_REGION:?required}"
-      - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
+      # Required: the API signs preview/upload URLs for this origin, and the web
+      # app's CSP only allows https://s3.<PROD_DOMAIN> (NEXT_PUBLIC_S3_PUBLIC_URL,
+      # baked in at build time by deploy-frontend.yml). Empty used to turn presign
+      # off silently; a different origin made the browser block every preview.
+      - "S3_PUBLIC_ENDPOINT_URL=${S3_PUBLIC_ENDPOINT_URL:?required, e.g. https://s3.folio.flowitup.com}"
 
   db:
     ports: !reset []
@@ -140,7 +144,7 @@ services:
     environment:
       - "MINIO_ROOT_USER=${S3_ACCESS_KEY:?required}"
       - "MINIO_ROOT_PASSWORD=${S3_SECRET_KEY:?required}"
-      - "MINIO_SERVER_URL=${S3_PUBLIC_ENDPOINT_URL:-}"
+      - "MINIO_SERVER_URL=${S3_PUBLIC_ENDPOINT_URL:?required}"
 
   frontend:
     image: europe-west1-docker.pkg.dev/flowitup-folio-prod/folio/frontend:${IMAGE_TAG:-latest}
