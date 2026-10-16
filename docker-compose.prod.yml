@@ -156,6 +156,12 @@ services:
     environment:
       - "NODE_ENV=production"
       - "API_INTERNAL_BASE_URL=${API_INTERNAL_BASE_URL:?required}"
+      # Universal links / App Links for invitation links (read at request time by
+      # /.well-known/apple-app-site-association and /.well-known/assetlinks.json).
+      # Optional: unset, the files claim no app and links open in the browser.
+      - "IOS_APP_ID=${IOS_APP_ID:-}"
+      - "ANDROID_PACKAGE=${ANDROID_PACKAGE:-}"
+      - "ANDROID_SHA256_CERT_FINGERPRINTS=${ANDROID_SHA256_CERT_FINGERPRINTS:-}"
       # No NEXT_PUBLIC_S3_PUBLIC_URL here: it is inlined at build time
       # (deploy-frontend.yml), so a runtime value would be ignored. The build
       # takes the repository variable S3_PUBLIC_ENDPOINT_URL, else

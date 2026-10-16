@@ -56,6 +56,19 @@ EOF
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
+Optional web settings (runtime, also read from `/opt/folio/.env` in production)
+that let invitation links open the mobile app instead of the browser:
+
+```bash
+IOS_APP_ID=<Apple team id>.com.flowitup.folio     # /.well-known/apple-app-site-association
+ANDROID_PACKAGE=com.flowitup.folio                 # empty = com.flowitup.folio
+ANDROID_SHA256_CERT_FINGERPRINTS=AA:BB:...,CC:DD:... # signing-cert SHA-256, comma-separated
+```
+
+Unset, both `.well-known` files claim no app. Set them before a mobile build
+that declares `associatedDomains` / verified App Links ships: Android caches a
+failed verification until the app is reinstalled.
+
 Production runs the same compose files from `/opt/folio` on the host, but only
 through `deploy-runner.sh` and `rollback.sh`: they pin `IMAGE_TAG` to one SHA
 per service, pass `--env-file /opt/folio/.env`, run migrations first and hold

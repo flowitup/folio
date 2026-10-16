@@ -108,6 +108,10 @@ services:
       - NODE_ENV=production
       # Runtime-only — used by server actions inside the container (Docker internal network)
       - API_INTERNAL_BASE_URL=${API_INTERNAL_BASE_URL:?required}
+      # Optional, runtime: app links for invitation links (empty = no app claimed)
+      - IOS_APP_ID=${IOS_APP_ID:-}
+      - ANDROID_PACKAGE=${ANDROID_PACKAGE:-}
+      - ANDROID_SHA256_CERT_FINGERPRINTS=${ANDROID_SHA256_CERT_FINGERPRINTS:-}
     depends_on:
       api:
         condition: service_healthy
