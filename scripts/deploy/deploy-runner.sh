@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Phase 5 — VM-side deploy script. Called by CI via `gcloud compute ssh --tunnel-through-iap`.
+# Host-side deploy script. Run by ci-deploy.sh, the forced command of the CI
+# deploy key that the deploy workflows SSH in with (scripts/README.md).
 # Pulls the new image from Artifact Registry, runs migrations (api only),
 # swaps the container with --no-deps so unrelated services aren't bounced, then
 # polls health.

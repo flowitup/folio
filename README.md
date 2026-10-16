@@ -44,7 +44,7 @@ POSTGRES_PASSWORD=construction
 POSTGRES_DB=construction
 SECRET_KEY=dev-secret-key-change-in-production
 CORS_ORIGINS=http://localhost:3000
-EMAIL_PROVIDER=smtp
+EMAIL_PROVIDER=log
 S3_ENDPOINT_URL=http://minio:9000
 S3_ACCESS_KEY=minioadmin
 S3_SECRET_KEY=minioadmin
@@ -226,7 +226,12 @@ run the frontend one too if its variables changed); that recreates the
 containers at that SHA with the new file.
 
 The rendered file also carries the backup scripts' `GCS_HMAC_ACCESS_KEY` and
-`GCS_HMAC_SECRET_KEY`, plus any optional flags.
+`GCS_HMAC_SECRET_KEY`. Optional API settings (`PUSH_PROVIDER`, `PUSH_LOCALE`,
+`REFRESH_TOKEN_POLICY`, `APP_MIN_VERSION_*`/`APP_UPDATE_URL_*`, the `OTP_*` and
+`SMS_*` budgets) only reach the container when `docker-compose.prod.yml` lists
+them under `api.environment`; a key that is only in `.env` is ignored. Each
+listed key falls back to the API's own default, and the API refuses to boot on
+a malformed value.
 
 Sign-in codes (phone-only login since 2026-09-11) go out through the Android
 SMS gateway:
