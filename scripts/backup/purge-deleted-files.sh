@@ -26,7 +26,9 @@ if [[ -z "$("${COMPOSE[@]}" ps -q api 2>/dev/null)" ]]; then
 fi
 
 log "starting: retention_days=${RETENTION_DAYS}"
-if ! "${COMPOSE[@]}" exec -T api python scripts/purge_soft_deleted_files.py --retention-days "$RETENTION_DAYS"; then
+# PYTHONPATH=/app: `python scripts/x.py` puts /app/scripts first on sys.path, so the
+# repo-root modules the janitor imports (wiring, config) would not be found.
+if ! "${COMPOSE[@]}" exec -T -e PYTHONPATH=/app api python scripts/purge_soft_deleted_files.py --retention-days "$RETENTION_DAYS"; then
   log "ERROR: janitor failed"
   exit 3
 fi

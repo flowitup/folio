@@ -232,7 +232,8 @@ hides it (soft delete); this job erases the rows and their MinIO objects
 (original, thumbnail/poster) once they have been deleted for
 `RETENTION_DAYS` (default 30), plus presigned document uploads that were
 never confirmed (no row owns the object) once a day old. It runs `scripts/purge_soft_deleted_files.py`
-inside the running `api` container (`docker compose exec -T api`), before the
+inside the running `api` container (`docker compose exec -T -e PYTHONPATH=/app api`, so the
+repo-root modules such as `wiring` import), before the
 03:30 mirror so erased files also leave the GCS copy. Env vars:
 `RETENTION_DAYS`, `COMPOSE_DIR` (default `/opt/folio`), `ENV_FILE`.
 
