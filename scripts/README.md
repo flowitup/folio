@@ -208,7 +208,7 @@ previous tag found, or any failed step (`gcloud`, pull, `up`, health-wait);
 ## backup/install-backup-cron.sh
 
 Installs the cron schedule and logrotate config for the three backup
-scripts below. Run manually as root on the prod host (once, or again to
+scripts below and the deleted-files janitor. Run manually as root on the prod host (once, or again to
 update) — unlike the deploy scripts, this is **not** synced automatically
 by the GitHub Actions workflows, so `scripts/backup/*.sh` must be copied to
 `/opt/folio/scripts/backup/` on the host by hand first.
@@ -218,12 +218,25 @@ by the GitHub Actions workflows, so `scripts/backup/*.sh` must be copied to
 ```
 
 Writes `/etc/cron.d/folio-backups` (`pg-dump.sh` daily 03:00,
-`minio-mirror.sh` daily 03:30, `verify-latest-dump.sh` Sundays 04:00 — host
-time, which is UTC on the prod host) and a matching
+`minio-mirror.sh` daily 03:30, `verify-latest-dump.sh` Sundays 04:00,
+`purge-deleted-files.sh` daily 02:30 — host time, which is UTC on the prod host) and a matching
 `/etc/logrotate.d/folio-backups` for `/var/log/folio/*.log`.
 
-Exit codes: `1` not run as root, `2` one of the three backup scripts is
+Exit codes: `1` not run as root, `2` one of the four scripts is
 missing or not executable at `/opt/folio/scripts/backup/`, `0` on success.
+
+## backup/purge-deleted-files.sh
+
+Daily janitor. Deleting a document, photo/video or analysis in the app only
+hides it (soft delete); this job erases the rows and their MinIO objects
+(original, thumbnail/poster) once they have been deleted for
+`RETENTION_DAYS` (default 30), plus presigned document uploads that were
+never confirmed (no row owns the object) once a day old. It runs `scripts/purge_soft_deleted_files.py`
+inside the running `api` container (`docker compose exec -T api`), before the
+03:30 mirror so erased files also leave the GCS copy. Env vars:
+`RETENTION_DAYS`, `COMPOSE_DIR` (default `/opt/folio`), `ENV_FILE`.
+
+Exit codes: `2` api container not running, `3` the janitor failed, `0` on success.
 
 ## backup/pg-dump.sh
 

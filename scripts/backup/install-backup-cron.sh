@@ -6,6 +6,8 @@
 #   03:00 Mon-Sun  →  pg-dump.sh
 #   03:30 Mon-Sun  →  minio-mirror.sh
 #   04:00 Sun      →  verify-latest-dump.sh
+#   02:30 Mon-Sun  →  purge-deleted-files.sh (erase files deleted > 30 days ago,
+#                     before the 03:30 mirror so they leave the backup too)
 #
 # Each entry redirects stdout+stderr to /var/log/folio/<job>.log AND emits
 # via logger to journald (the scripts handle that internally). Cron output
@@ -19,7 +21,7 @@ SCRIPT_DIR=/opt/folio/scripts/backup
 [[ $EUID -eq 0 ]] || { echo "ERROR: run as root" >&2; exit 1; }
 
 # 1. Ensure scripts are present + executable on the VM.
-for s in pg-dump.sh minio-mirror.sh verify-latest-dump.sh; do
+for s in pg-dump.sh minio-mirror.sh verify-latest-dump.sh purge-deleted-files.sh; do
   [[ -x "${SCRIPT_DIR}/${s}" ]] || { echo "ERROR: ${SCRIPT_DIR}/${s} missing or not executable. Copy it from the worktree first." >&2; exit 2; }
 done
 
@@ -42,6 +44,9 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Weekly restore-test of latest dump
 0 4 * * 0   root  /opt/folio/scripts/backup/verify-latest-dump.sh >> /var/log/folio/verify-latest-dump.log 2>&1
+
+# Daily janitor: erase documents/photos/analyses deleted more than 30 days ago
+30 2 * * *  root  /opt/folio/scripts/backup/purge-deleted-files.sh >> /var/log/folio/purge-deleted-files.log 2>&1
 EOF
 
 chmod 644 "$CRON_FILE"
@@ -76,10 +81,11 @@ echo "next runs (UTC):"
 echo "  pg-dump:        $(date -u -d 'tomorrow 03:00' '+%a %F %T' 2>/dev/null || date -u -v+1d -v3H -v0M -v0S '+%a %F %T')"
 echo "  minio-mirror:   $(date -u -d 'tomorrow 03:30' '+%a %F %T' 2>/dev/null || date -u -v+1d -v3H -v30M -v0S '+%a %F %T')"
 echo "  verify (Sun):   next Sunday 04:00 UTC"
+echo "  purge-deleted:  $(date -u -d 'tomorrow 02:30' '+%a %F %T' 2>/dev/null || date -u -v+1d -v2H -v30M -v0S '+%a %F %T')"
 echo ""
 echo "manual smoke-test (recommended right after install):"
 echo "  sudo /opt/folio/scripts/backup/pg-dump.sh"
 echo "  sudo /opt/folio/scripts/backup/minio-mirror.sh"
 echo ""
 echo "tail logs while testing:"
-echo "  sudo journalctl -ft pg-dump -t minio-mirror -t backup-verify"
+echo "  sudo journalctl -ft pg-dump -t minio-mirror -t backup-verify -t purge-deleted-files"
