@@ -26,7 +26,10 @@ url="https://releases.agentkit.best/binaries/${AK_PIN_VERSION}/ak_${AK_PIN_VERSI
 
 lock="$HOME/.agentkit-cloud-install.lock"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"; rmdir "$lock" 2>/dev/null || true' EXIT
+echo $$ > "$lock/pid" 2>/dev/null || true
+trap 'rm -rf "$tmp"; rm -f "$lock/pid"; rmdir "$lock" 2>/dev/null || true' EXIT
+trap 'echo "agentkit: stopped by a signal"; exit 1' HUP INT TERM
+echo "agentkit: install started $(date -u +%FT%TZ)"
 
 bin_dir="$HOME/.local/bin"
 mkdir -p "$bin_dir"
@@ -50,7 +53,6 @@ ak --version
 
 # Log in with the key from the environment; --api-key-stdin keeps it out of the process list.
 printf '%s' "$AGENTKIT_API_KEY" | ak login --api-key-stdin --no-interactive
-ak whoami
 
 # Run ak from a temp dir, never from ~: there project scope and ~/.claude are the same folder.
 settings="$HOME/.claude/settings.json"
@@ -58,8 +60,9 @@ mkdir -p "$HOME/.claude"
 had_settings=0
 if [ -f "$settings" ]; then cp "$settings" "$tmp/settings.before.json"; had_settings=1; fi
 
-( cd "$tmp" && ak kit init engineer --global --force --yes --no-interactive ) \
-  || ( cd "$tmp" && ak kit init engineer --global --force --yes )
+echo "agentkit: installing the engineer kit"
+( cd "$tmp" && ak kit init engineer --global --force --yes --no-interactive </dev/null ) \
+  || ( cd "$tmp" && ak kit init engineer --global --force --yes </dev/null )
 
 if [ "${AGENTKIT_CLOUD_HOOKS:-0}" != "1" ]; then
   # Keep skills, agents and rules; put the user settings (hooks, status line) back as they were.
