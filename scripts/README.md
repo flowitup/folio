@@ -208,7 +208,7 @@ previous tag found, or any failed step (`gcloud`, pull, `up`, health-wait);
 ## backup/install-backup-cron.sh
 
 Installs the cron schedule and logrotate config for the three backup
-scripts below and the deleted-files janitor. Run manually as root on the prod host (once, or again to
+scripts below, the deleted-files janitor and the scheduled reminder pushes. Run manually as root on the prod host (once, or again to
 update) — unlike the deploy scripts, this is **not** synced automatically
 by the GitHub Actions workflows, so `scripts/backup/*.sh` must be copied to
 `/opt/folio/scripts/backup/` on the host by hand first.
@@ -219,10 +219,10 @@ by the GitHub Actions workflows, so `scripts/backup/*.sh` must be copied to
 
 Writes `/etc/cron.d/folio-backups` (`pg-dump.sh` daily 03:00,
 `minio-mirror.sh` daily 03:30, `verify-latest-dump.sh` Sundays 04:00,
-`purge-deleted-files.sh` daily 02:30 — host time, which is UTC on the prod host) and a matching
-`/etc/logrotate.d/folio-backups` for `/var/log/folio/*.log`.
+`purge-deleted-files.sh` daily 02:30, `send-reminders.sh` every 15 minutes — host time, which
+is UTC on the prod host) and a matching `/etc/logrotate.d/folio-backups` for `/var/log/folio/*.log`.
 
-Exit codes: `1` not run as root, `2` one of the four scripts is
+Exit codes: `1` not run as root, `2` one of the five scripts is
 missing or not executable at `/opt/folio/scripts/backup/`, `0` on success.
 
 ## backup/purge-deleted-files.sh
@@ -238,6 +238,36 @@ repo-root modules such as `wiring` import), before the
 `RETENTION_DAYS`, `COMPOSE_DIR` (default `/opt/folio`), `ENV_FILE`.
 
 Exit codes: `2` api container not running, `3` the janitor failed, `0` on success.
+
+## backup/send-reminders.sh
+
+Scheduled reminder pushes (owner decision QĐ-9), run every 15 minutes by cron. It runs
+`scripts/send_scheduled_reminders.py` inside the running `api` container
+(`docker compose exec -T -e PYTHONPATH=/app api`), which decides from the Europe/Paris
+clock what is due, so the UTC host cron and daylight saving need nothing:
+
+- managers: "no attendance logged today", 19:30–22:00 Paris on working days (Mon–Fri,
+  not French public holidays), for sites that logged attendance in the last 7 days and
+  have nothing for today;
+- company admins: overdue factures (sent, due date passed), Mondays 09:00–18:00 Paris;
+- company admins: summary of the month just ended (days, wages, wages still owed), the
+  1st of the month 09:00–18:00 Paris.
+
+The window means a late or missed run still sends (19:45 sends the 19:30 reminder). Every
+send is recorded in `scheduled_reminder_log` (one row per user, reminder and Paris day),
+so re-runs never push twice and a person gets at most one reminder push a day; a second
+reminder the same day only goes to the bell. Pushes go through `PUSH_PROVIDER` like every
+other push and honour each user's notification settings.
+
+Check what would be sent without sending anything:
+
+```bash
+cd /opt/folio && docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env \
+  exec -T -e PYTHONPATH=/app api python scripts/send_scheduled_reminders.py --dry-run [--now 2026-11-23T19:35+01:00]
+```
+
+Env vars: `COMPOSE_DIR` (default `/opt/folio`), `ENV_FILE`.
+Exit codes: `2` api container not running, `3` the reminder script failed, `0` on success.
 
 ## backup/pg-dump.sh
 
