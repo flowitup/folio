@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Phase 7 — install cron entries on the VM for daily/weekly backups.
+# Phase 7 — install cron entries on the VM for daily/weekly backups (and the other
+# host-scheduled jobs: deleted-files janitor, scheduled reminder pushes).
 # Runs ON THE VM as root.
 #
 # Cron schedule (UTC):
@@ -8,6 +9,8 @@
 #   04:00 Sun      →  verify-latest-dump.sh
 #   02:30 Mon-Sun  →  purge-deleted-files.sh (erase files deleted > 30 days ago,
 #                     before the 03:30 mirror so they leave the backup too)
+#   every 15 min   →  send-reminders.sh (scheduled reminder pushes; the script
+#                     reads the Europe/Paris clock, so UTC here is fine)
 #
 # Each entry redirects stdout+stderr to /var/log/folio/<job>.log AND emits
 # via logger to journald (the scripts handle that internally). Cron output
@@ -21,7 +24,7 @@ SCRIPT_DIR=/opt/folio/scripts/backup
 [[ $EUID -eq 0 ]] || { echo "ERROR: run as root" >&2; exit 1; }
 
 # 1. Ensure scripts are present + executable on the VM.
-for s in pg-dump.sh minio-mirror.sh verify-latest-dump.sh purge-deleted-files.sh; do
+for s in pg-dump.sh minio-mirror.sh verify-latest-dump.sh purge-deleted-files.sh send-reminders.sh; do
   [[ -x "${SCRIPT_DIR}/${s}" ]] || { echo "ERROR: ${SCRIPT_DIR}/${s} missing or not executable. Copy it from the worktree first." >&2; exit 2; }
 done
 
@@ -47,6 +50,10 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Daily janitor: erase documents/photos/analyses deleted more than 30 days ago
 30 2 * * *  root  /opt/folio/scripts/backup/purge-deleted-files.sh >> /var/log/folio/purge-deleted-files.log 2>&1
+
+# Scheduled reminder pushes (attendance 19:30 Paris, overdue factures Monday, month summary
+# on the 1st); what is due is decided on the Paris clock, every send is recorded once
+*/15 * * * * root  /opt/folio/scripts/backup/send-reminders.sh   >> /var/log/folio/send-reminders.log 2>&1
 EOF
 
 chmod 644 "$CRON_FILE"
@@ -82,10 +89,11 @@ echo "  pg-dump:        $(date -u -d 'tomorrow 03:00' '+%a %F %T' 2>/dev/null ||
 echo "  minio-mirror:   $(date -u -d 'tomorrow 03:30' '+%a %F %T' 2>/dev/null || date -u -v+1d -v3H -v30M -v0S '+%a %F %T')"
 echo "  verify (Sun):   next Sunday 04:00 UTC"
 echo "  purge-deleted:  $(date -u -d 'tomorrow 02:30' '+%a %F %T' 2>/dev/null || date -u -v+1d -v2H -v30M -v0S '+%a %F %T')"
+echo "  send-reminders: every 15 minutes"
 echo ""
 echo "manual smoke-test (recommended right after install):"
 echo "  sudo /opt/folio/scripts/backup/pg-dump.sh"
 echo "  sudo /opt/folio/scripts/backup/minio-mirror.sh"
 echo ""
 echo "tail logs while testing:"
-echo "  sudo journalctl -ft pg-dump -t minio-mirror -t backup-verify -t purge-deleted-files"
+echo "  sudo journalctl -ft pg-dump -t minio-mirror -t backup-verify -t purge-deleted-files -t send-reminders"
